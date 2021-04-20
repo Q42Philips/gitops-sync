@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/google/go-github/v33/github"
 	"github.com/jnovack/flag"
@@ -31,6 +32,7 @@ var (
 	createPR       = flag.Bool("pr", false, "whether to create a PR")
 	doMerge        = flag.Bool("merge", false, "whether to merge straight away")
 	prBody         = flag.String("pr-body", "Sync", "Body of PR")
+	commitTime     = flag.String("commit-timestamp", "now", "Time of the commit; for example $CI_COMMIT_TIMESTAMP of the original commit")
 	// Either use
 	authUsername = flag.String("github-username", "", "GitHub username to use for basic auth")
 	authPassword = flag.String("github-password", "", "GitHub password to use for basic auth")
@@ -157,7 +159,15 @@ func main() {
 	status, err := w.Status()
 	orFatal(err, "status")
 	prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
-	hash, err := w.Commit(*commitMsg, &git.CommitOptions{})
+
+	var t time.Time = time.Now()
+	if *commitTime != "now" {
+		t, err = time.Parse(time.RFC3339, *commitTime)
+		orFatal(err, "parsing commit time with RFC3339/ISO8601 format")
+	}
+	hash, err := w.Commit(*commitMsg, &git.CommitOptions{
+		Author: &object.Signature{Name: u.GetLogin(), Email: u.GetEmail(), When: t},
+	})
 	orFatal(err, "committing")
 	log.Println("Created commit", hash.String())
 	obj, err := outputRepo.CommitObject(hash)
