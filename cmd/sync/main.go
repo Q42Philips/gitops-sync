@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-billy/v5/memfs"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/google/go-github/v33/github"
 	"github.com/jnovack/flag"
 	"github.com/koron-go/prefixw"
 	"github.com/pkg/errors"
@@ -22,11 +24,12 @@ import (
 var (
 	commitMsg      = flag.String("message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
 	inputPath      = flag.String("input-path", ".", "where to read artifacts from")
-	inputIgnore    = flag.String("input-ignore", "", "which files to read and which to skip (format is .gitignore format)")
 	outputRepo     = flag.String("output-repo", "", "where to write artifacts to")
 	outputRepoPath = flag.String("output-repo-path", ".", "where to write artifacts to")
 	outputBase     = flag.String("output-base", "develop", "reference to use as basis")
 	outputHead     = flag.String("output-head", "", "reference to write to & create a PR from into base; default = generated")
+	createPR       = flag.Bool("pr", false, "whether to create a PR")
+	prBody         = flag.String("pr-body", "Sync", "Body of PR")
 	// Either use
 	authUsername = flag.String("github-username", "", "GitHub username to use for basic auth")
 	authPassword = flag.String("github-password", "", "GitHub password to use for basic auth")
@@ -59,10 +62,12 @@ func main() {
 
 	// Options
 	if *outputHead == "" {
-		*outputHead = fmt.Sprintf("sync/%s", time.Now().Format("20060102T150405Z"))
+		*outputHead = fmt.Sprintf("auto/sync/%s", time.Now().Format("20060102T150405Z"))
 	}
 	headRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *outputHead))
 	baseRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *outputBase))
+	orgName, repoName, err := parseGitHubRepo(*outputRepo)
+	orFatal(err, "parsing url")
 
 	// Prepare output repository
 	outputStorer := memory.NewStorage()
@@ -171,6 +176,33 @@ func main() {
 	})
 	orFatal(err, "pushing")
 	log.Println()
+
+	// Pull Request
+	if *createPR {
+		prs, _, err := client.PullRequests.List(ctx, orgName, repoName, &github.PullRequestListOptions{
+			Head: fmt.Sprintf("%s:%s", orgName, headRefName.Short()),
+			Base: baseRefName.Short(),
+		})
+		orFatal(err, "getting existing prs")
+		if len(prs) > 0 {
+			log.Println("Existing PRs:")
+			for _, pr := range prs {
+				log.Println("-", pr.GetHTMLURL())
+			}
+			return
+		}
+
+		prTemplate := github.NewPullRequest{
+			Base:  refStr(baseRefName.Short()),
+			Head:  refStr(headRefName.Short()),
+			Draft: refBool(true),
+			Body:  prBody,
+			Title: commitMsg,
+		}
+		pr, _, err := client.PullRequests.Create(ctx, orgName, repoName, &prTemplate)
+		orFatal(err, "creating pr")
+		log.Println(pr.GetHTMLURL())
+	}
 }
 
 func orFatal(err error, ctx string) {
@@ -191,4 +223,23 @@ func maskURL(u string) string {
 	}
 	parsed.User = info
 	return parsed.String()
+}
+
+func parseGitHubRepo(u string) (org, repo string, err error) {
+	p, err := url.Parse(u)
+	if err != nil {
+		return "", "", err
+	}
+	pathSegments := strings.Split(strings.Trim(strings.TrimRight(p.Path, ".git"), "/"), "/")
+	if len(pathSegments) < 2 {
+		return "", "", errors.New("invalid github url")
+	}
+	return pathSegments[0], pathSegments[1], nil
+}
+
+func refStr(inp string) *string {
+	return &inp
+}
+func refBool(inp bool) *bool {
+	return &inp
 }
