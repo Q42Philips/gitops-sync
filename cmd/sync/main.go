@@ -118,6 +118,7 @@ func Main() {
 	orFatal(err, fmt.Sprintf("base branch %q does not exist, check your inputs", *outputBase))
 
 	headRef, err := outputRepo.Reference(headRefName, true)
+	var beforeRefspecs []config.RefSpec = nil
 	if err == nil && !headRef.Hash().IsZero() {
 		// Reuse existing head branch
 		log.Printf("Using %s as existing head", headRefName)
@@ -125,6 +126,8 @@ func Main() {
 			Branch: headRefName,
 		})
 		orFatal(err, fmt.Sprintf("worktree checkout to %s (%s)", headRefName, headRef.Hash()))
+		// Store current head for safe push
+		beforeRefspecs = []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", headRef.Hash(), headRefName))}
 	} else if err == plumbing.ErrReferenceNotFound {
 		// Create new head branch
 		log.Printf("Creating head branch %s from base %s", headRefName, baseRefName)
@@ -137,11 +140,6 @@ func Main() {
 	} else {
 		orFatal(err, "worktree checkout failed")
 	}
-
-	// Store head for safe push
-	head, err := outputRepo.Head()
-	orFatal(err, "determining head")
-	beforeRefspec := config.RefSpec(fmt.Sprintf("%s:%s", head.Hash(), headRefName))
 	log.Println()
 
 	// Commit options
@@ -175,7 +173,7 @@ func Main() {
 	log.Printf("Pushing %s", refspec)
 	err = outputRepo.Push(&git.PushOptions{
 		RefSpecs:          []config.RefSpec{refspec},
-		RequireRemoteRefs: []config.RefSpec{beforeRefspec},
+		RequireRemoteRefs: beforeRefspecs,
 		Auth:              gitAuth,
 		Progress:          prefixw.New(os.Stderr, "> "),
 	})
