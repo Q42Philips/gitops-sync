@@ -29,6 +29,7 @@ var (
 	outputBase     = flag.String("output-base", "develop", "reference to use as basis")
 	outputHead     = flag.String("output-head", "", "reference to write to & create a PR from into base; default = generated")
 	createPR       = flag.Bool("pr", false, "whether to create a PR")
+	doMerge        = flag.Bool("merge", false, "whether to merge straight away")
 	prBody         = flag.String("pr-body", "Sync", "Body of PR")
 	// Either use
 	authUsername = flag.String("github-username", "", "GitHub username to use for basic auth")
@@ -177,7 +178,19 @@ func main() {
 	orFatal(err, "pushing")
 	log.Println()
 
-	// Pull Request
+	// Merge if requested
+	if *doMerge {
+		log.Printf("Merging %s into %s...", headRefName.Short(), baseRefName.Short())
+		c, _, err := client.Repositories.Merge(ctx, orgName, repoName, &github.RepositoryMergeRequest{
+			Head: refStr(headRefName.Short()),
+			Base: refStr(baseRefName.Short()),
+		})
+		orFatal(err, "merging")
+		log.Println(c.Commit.GetMessage(), c.GetHTMLURL())
+		return
+	}
+
+	// Pull Request if requested
 	if *createPR {
 		prs, _, err := client.PullRequests.List(ctx, orgName, repoName, &github.PullRequestListOptions{
 			Head: fmt.Sprintf("%s:%s", orgName, headRefName.Short()),
