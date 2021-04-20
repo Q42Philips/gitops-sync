@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-billy/v5/osfs"
@@ -19,12 +20,13 @@ import (
 )
 
 var (
-	commitMsg        = flag.String("message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
-	inputPath        = flag.String("input-path", ".", "where to read artifacts from")
-	inputIgnore      = flag.String("input-ignore", "", "which files to read and which to skip (format is .gitignore format)")
-	outputRepo       = flag.String("output-repo", "", "where to write artifacts to")
-	outputRepoPath   = flag.String("output-repo-path", ".", "where to write artifacts to")
-	outputRepoBranch = flag.String("output-repo-branch", "develop", "where to write artifacts to")
+	commitMsg      = flag.String("message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
+	inputPath      = flag.String("input-path", ".", "where to read artifacts from")
+	inputIgnore    = flag.String("input-ignore", "", "which files to read and which to skip (format is .gitignore format)")
+	outputRepo     = flag.String("output-repo", "", "where to write artifacts to")
+	outputRepoPath = flag.String("output-repo-path", ".", "where to write artifacts to")
+	outputBase     = flag.String("output-base", "develop", "reference to use as basis")
+	outputHead     = flag.String("output-head", "", "reference to write to & create a PR from into base; default = generated")
 	// Either use
 	authUsername = flag.String("github-username", "", "GitHub username to use for basic auth")
 	authPassword = flag.String("github-password", "", "GitHub password to use for basic auth")
@@ -52,25 +54,78 @@ func main() {
 		log.Panic(err)
 	} else {
 		log.Printf("Signed in as %q", u.GetLogin())
+		log.Println()
 	}
 
-	// Prepare output
+	// Options
+	if *outputHead == "" {
+		*outputHead = fmt.Sprintf("sync/%s", time.Now().Format("20060102T150405Z"))
+	}
+	headRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *outputHead))
+	baseRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *outputBase))
+
+	// Prepare output repository
 	outputStorer := memory.NewStorage()
 	outputFs := memfs.New()
-	log.Printf("Cloning %s", maskURL(*outputRepo))
+	log.Printf("Cloning %s (%s)", maskURL(*outputRepo), baseRefName)
 	outputRepo, err := git.Clone(outputStorer, outputFs, &git.CloneOptions{
-		URL:      *outputRepo,
-		Auth:     gitAuth,
-		Progress: prefixw.New(os.Stderr, "> "),
+		Auth:          gitAuth,
+		Progress:      prefixw.New(os.Stderr, "> "),
+		URL:           *outputRepo,
+		ReferenceName: baseRefName,
+		SingleBranch:  true,
+		Depth:         1,
 	})
 	orFatal(err, "cloning")
+	log.Println()
 
-	// Gather inputs
+	log.Printf("Fetching %s", headRefName)
+	err = outputRepo.Fetch(&git.FetchOptions{
+		Auth:     gitAuth,
+		Progress: prefixw.New(os.Stderr, "> "),
+		RefSpecs: []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", headRefName, headRefName))},
+		Depth:    1,
+	})
+	if err == git.NoErrAlreadyUpToDate || errors.Is(err, git.NoMatchingRefSpecError{}) {
+		err = nil
+	}
+	orFatal(err, "fetching pre-existing head")
+	log.Println()
+
+	// Prepare begin state
 	inputFs := osfs.New(*inputPath)
-
-	// Do sync
 	w, err := outputRepo.Worktree()
 	orFatal(err, "worktree")
+
+	var startRef *plumbing.Reference
+	startRef, err = outputRepo.Reference(baseRefName, true)
+	orFatal(err, fmt.Sprintf("base branch %q does not exist, check your inputs", *outputBase))
+
+	_, err = outputRepo.Reference(headRefName, true)
+	if err == nil {
+		// Reuse existing head branch
+		log.Printf("Using %s as existing head", headRefName)
+		err = w.Checkout(&git.CheckoutOptions{
+			Branch: headRefName,
+			Create: false,
+		})
+		orFatal(err, "worktree checkout base branch")
+	} else if err == plumbing.ErrReferenceNotFound {
+		// Create new head branch
+		log.Printf("Creating head branch %s from base %s", headRefName, baseRefName)
+		err = w.Checkout(&git.CheckoutOptions{
+			Branch: headRefName,
+			Hash:   startRef.Hash(),
+			Create: true,
+		})
+		orFatal(err, "worktree checkout head branch")
+	} else {
+		orFatal(err, "worktree checkout failed")
+	}
+
+	// Do sync
+	log.Println()
+	log.Println("Sync changes:")
 	err = w.RemoveGlob(*outputRepoPath)
 	orFatal(err, "removing old artifacts")
 	if *outputRepoPath != "." && *outputRepoPath != "" {
@@ -91,7 +146,7 @@ func main() {
 		if refName == "" {
 			refName = "unknown"
 		}
-		*commitMsg = fmt.Sprintf("Sync %s/%s to %s", project, refName, *outputRepoBranch)
+		*commitMsg = fmt.Sprintf("Sync %s/%s to %s", project, refName, headRefName.Short())
 	}
 	status, err := w.Status()
 	orFatal(err, "status")
@@ -101,12 +156,12 @@ func main() {
 	log.Println("Created commit", hash.String())
 	obj, err := outputRepo.CommitObject(hash)
 	orFatal(err, "committing")
-	ref := plumbing.NewHashReference("refs/heads/tmp", obj.Hash)
+	ref := plumbing.NewHashReference(headRefName, obj.Hash)
 	err = outputStorer.SetReference(ref)
 	orFatal(err, "creating ref")
 
 	// Push
-	refspec := config.RefSpec(fmt.Sprintf("%s:refs/heads/%s", "refs/heads/tmp", *outputRepoBranch))
+	refspec := config.RefSpec(fmt.Sprintf("%s:%s", ref.Name(), headRefName))
 	log.Printf("Pushing %s", refspec)
 	err = outputRepo.Push(&git.PushOptions{
 		RefSpecs: []config.RefSpec{refspec},

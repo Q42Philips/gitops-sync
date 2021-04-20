@@ -14,5 +14,12 @@ You must ensure the git repository is writable by providing the right authorizat
 
 Currently only works using GitHub. Please consider forking and adding GitLab support if needed.
 
+Usage:
+```
+make build
+
+dotenv -f sync.env bin/sync -output-repo https://github.com/yourorg/gitops.git -output-base=develop -output-head=test-sync
+```
+
 ### References
 1. See some `go-git` examples in https://github.com/go-git/go-git/tree/master/_examples/
