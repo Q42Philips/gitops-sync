@@ -233,6 +233,8 @@ func Main() {
 				Progress:          prefixw.New(os.Stderr, "> "),
 			})
 			orFatal(err, "pushing")
+			c, _, err = client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
+			orFatal(err, "getting custom merge commit")
 		}
 		orFatal(err, "merging")
 		log.Println(c.Commit.GetMessage(), c.GetHTMLURL())
