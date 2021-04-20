@@ -150,12 +150,12 @@ func Main() {
 		t, err = time.Parse(time.RFC3339, *commitTime)
 		orFatal(err, "parsing commit time with RFC3339/ISO8601 format")
 	}
-	commitOpt := &git.CommitOptions{
-		Author: &object.Signature{
-			Name:  u.GetLogin(),
-			Email: firstStr(u.GetEmail(), fmt.Sprintf("%s@users.noreply.github.com", u.GetLogin())),
-			When:  t,
-		}}
+	signature := &object.Signature{
+		Name:  u.GetLogin(),
+		Email: firstStr(u.GetEmail(), fmt.Sprintf("%s@users.noreply.github.com", u.GetLogin())),
+		When:  t,
+	}
+	commitOpt := &git.CommitOptions{Author: signature, Committer: signature}
 
 	// Do sync & commit
 	obj := sync(outputRepo, inputFs, commitOpt, *commitMsg)
