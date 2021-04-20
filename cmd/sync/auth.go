@@ -21,6 +21,7 @@ func getClientAuth() (hubClient *github.Client, gitAuth githttp.AuthMethod) {
 	} else {
 		log.Fatal("No authentication provided. See help for authentication options.")
 	}
+	log.Println(gitAuth.String())
 	return hubClient, gitAuth
 }
 
