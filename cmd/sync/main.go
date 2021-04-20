@@ -339,11 +339,21 @@ func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOpt
 	orFatal(err, "status")
 	prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
 
+	if len(status) == 0 {
+		log.Println("No changes. Skipping commit.")
+		head, err := gr.Head()
+		orFatal(err, "getting head")
+		obj, err := gr.CommitObject(head.Hash())
+		orFatal(err, "getting commit")
+		return obj
+	}
+
 	// Commit
+	w.Status()
 	hash, err := w.Commit(msg, commitOpt)
 	orFatal(err, "committing")
 	log.Println("Created commit", hash.String())
 	obj, err := gr.CommitObject(hash)
-	orFatal(err, "committing")
+	orFatal(err, "getting commit")
 	return obj
 }
