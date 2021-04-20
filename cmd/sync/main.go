@@ -94,8 +94,6 @@ func Main() {
 		Progress:      prefixw.New(os.Stderr, "> "),
 		URL:           *outputRepo,
 		ReferenceName: baseRefName,
-		SingleBranch:  true,
-		Depth:         1,
 	})
 	orFatal(err, "cloning")
 	log.Println()
@@ -105,12 +103,15 @@ func Main() {
 		Auth:     gitAuth,
 		Progress: prefixw.New(os.Stderr, "> "),
 		RefSpecs: []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", headRefName, headRefName))},
-		Depth:    1,
 	})
-	if err == git.NoErrAlreadyUpToDate || errors.Is(err, git.NoMatchingRefSpecError{}) {
+	if err == git.NoErrAlreadyUpToDate {
 		err = nil
+	} else if errors.Is(err, git.NoMatchingRefSpecError{}) {
+		log.Println(errors.Wrap(err, "fetching pre-existing head"))
+		err = nil
+	} else {
+		orFatal(err, "fetching pre-existing head")
 	}
-	orFatal(err, "fetching pre-existing head")
 	log.Println()
 
 	// Prepare begin state
@@ -122,8 +123,8 @@ func Main() {
 	startRef, err = outputRepo.Reference(baseRefName, true)
 	orFatal(err, fmt.Sprintf("base branch %q does not exist, check your inputs", *outputBase))
 
-	_, err = outputRepo.Reference(headRefName, true)
-	if err == nil {
+	headRef, err := outputRepo.Reference(headRefName, true)
+	if err == nil && !headRef.Hash().IsZero() {
 		// Reuse existing head branch
 		log.Printf("Using %s as existing head", headRefName)
 		err = w.Checkout(&git.CheckoutOptions{
