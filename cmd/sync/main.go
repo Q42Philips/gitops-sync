@@ -127,15 +127,14 @@ func Main() {
 		// Reuse existing head branch
 		log.Printf("Using %s as existing head", headRefName)
 		err = w.Checkout(&git.CheckoutOptions{
-			Branch: headRefName,
-			Create: false,
+			Branch: plumbing.ReferenceName(headRefName.Short()),
 		})
 		orFatal(err, "worktree checkout base branch")
 	} else if err == plumbing.ErrReferenceNotFound {
 		// Create new head branch
 		log.Printf("Creating head branch %s from base %s", headRefName, baseRefName)
 		err = w.Checkout(&git.CheckoutOptions{
-			Branch: headRefName,
+			Branch: plumbing.ReferenceName(headRefName.Short()),
 			Hash:   startRef.Hash(),
 			Create: true,
 		})
@@ -207,7 +206,7 @@ func Main() {
 
 			// First checkout theirs
 			w.Checkout(&git.CheckoutOptions{
-				Branch: baseMergeRefName,
+				Branch: plumbing.ReferenceName(baseMergeRefName.Short()),
 				Force:  true,
 			})
 			baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
