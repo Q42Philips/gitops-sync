@@ -94,6 +94,7 @@ func Main() {
 		Progress:      prefixw.New(os.Stderr, "> "),
 		URL:           *outputRepo,
 		ReferenceName: baseRefName,
+		Depth:         100,
 	})
 	orFatal(err, "cloning")
 	log.Println()
@@ -103,6 +104,7 @@ func Main() {
 		Auth:     gitAuth,
 		Progress: prefixw.New(os.Stderr, "> "),
 		RefSpecs: []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", headRefName, headRefName))},
+		Depth:    100,
 	})
 	if err == git.NoErrAlreadyUpToDate {
 		err = nil
@@ -130,7 +132,7 @@ func Main() {
 		err = w.Checkout(&git.CheckoutOptions{
 			Branch: plumbing.ReferenceName(headRefName.Short()),
 		})
-		orFatal(err, "worktree checkout base branch")
+		orFatal(err, fmt.Sprintf("worktree checkout to %s (%s)", headRefName, headRef.Hash()))
 	} else if err == plumbing.ErrReferenceNotFound {
 		// Create new head branch
 		log.Printf("Creating head branch %s from base %s", headRefName, baseRefName)
@@ -139,7 +141,7 @@ func Main() {
 			Hash:   startRef.Hash(),
 			Create: true,
 		})
-		orFatal(err, "worktree checkout head branch")
+		orFatal(err, fmt.Sprintf("worktree checkout to %s := %s", headRefName, startRef.Hash()))
 	} else {
 		orFatal(err, "worktree checkout failed")
 	}
@@ -212,11 +214,11 @@ func Main() {
 				Force:  true,
 			})
 			baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
-			orFatal(err, "getting merge base")
+			orFatal(err, fmt.Sprintf("worktree checkout to %s (unkown)", baseMergeRefName))
 
 			// Draft merge commit opts
 			baseMergeBeforeHash := baseMergeRef.Hash()
-			commitOpt.Parents = []plumbing.Hash{baseMergeRef.Hash(), obj.Hash}
+			commitOpt.Parents = []plumbing.Hash{baseMergeBeforeHash, obj.Hash}
 			// Then sync again by overwriting with our inputFs
 			obj = sync(outputRepo, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
 			ref := plumbing.NewHashReference(baseMergeRefName, obj.Hash)
