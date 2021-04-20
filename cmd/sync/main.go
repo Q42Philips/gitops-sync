@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 )
 
+// flags
 var (
 	commitMsg      = flag.String("message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
 	inputPath      = flag.String("input-path", ".", "where to read artifacts from")
@@ -34,6 +35,7 @@ var (
 	baseMerge      = flag.String("merge", "", "whether to merge straight away, which branch to set as merge base")
 	prBody         = flag.String("pr-body", "Sync", "Body of PR")
 	commitTime     = flag.String("commit-timestamp", "now", "Time of the commit; for example $CI_COMMIT_TIMESTAMP of the original commit")
+	dryRun         = flag.Bool("dry-run", false, "Do not push, merge, nor PR")
 	// Either use
 	authUsername = flag.String("github-username", "", "GitHub username to use for basic auth")
 	authPassword = flag.String("github-password", "", "GitHub password to use for basic auth")
@@ -44,7 +46,6 @@ var (
 
 func init() {
 	flag.Parse()
-	log.SetFlags(0)
 
 	if *outputRepo == "" {
 		log.Fatal("No output repository set")
@@ -130,14 +131,14 @@ func Main() {
 		// Reuse existing head branch
 		log.Printf("Using %s as existing head", headRefName)
 		err = w.Checkout(&git.CheckoutOptions{
-			Branch: plumbing.ReferenceName(headRefName.Short()),
+			Branch: headRefName,
 		})
 		orFatal(err, fmt.Sprintf("worktree checkout to %s (%s)", headRefName, headRef.Hash()))
 	} else if err == plumbing.ErrReferenceNotFound {
 		// Create new head branch
 		log.Printf("Creating head branch %s from base %s", headRefName, baseRefName)
 		err = w.Checkout(&git.CheckoutOptions{
-			Branch: plumbing.ReferenceName(headRefName.Short()),
+			Branch: headRefName,
 			Hash:   startRef.Hash(),
 			Create: true,
 		})
@@ -172,6 +173,11 @@ func Main() {
 	ref := plumbing.NewHashReference(headRefName, obj.Hash)
 	err = outputStorer.SetReference(ref)
 	orFatal(err, "creating ref")
+
+	if *dryRun {
+		log.Println("Stopping now because of dry-run")
+		return
+	}
 
 	// Push
 	refspec := config.RefSpec(fmt.Sprintf("%s:%s", ref.Name(), headRefName))
@@ -210,7 +216,7 @@ func Main() {
 
 			// First checkout theirs
 			w.Checkout(&git.CheckoutOptions{
-				Branch: plumbing.ReferenceName(baseMergeRefName.Short()),
+				Branch: baseMergeRefName,
 				Force:  true,
 			})
 			baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
