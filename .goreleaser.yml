@@ -1,0 +1,7 @@
+builds:
+- id: gitops-sync
+  ldflags:
+  - '-s -w -extldflags "-static"'
+  env:
+  - CGO_ENABLED=0
+
