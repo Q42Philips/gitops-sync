@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
@@ -72,6 +73,18 @@ func Main() {
 	orgName, repoName, err := parseGitHubRepo(*outputRepo)
 	orFatal(err, "parsing url")
 
+	if *commitMsg == "" {
+		project := os.Getenv("CI_PROJECT_NAME")
+		if project == "" {
+			project, _ = os.Getwd()
+		}
+		refName := os.Getenv("CI_COMMIT_REF_NAME")
+		if refName == "" {
+			refName = "unknown"
+		}
+		*commitMsg = fmt.Sprintf("Sync %s/%s", project, refName)
+	}
+
 	// Prepare output repository
 	outputStorer := memory.NewStorage()
 	outputFs := memfs.New()
@@ -131,50 +144,29 @@ func Main() {
 		orFatal(err, "worktree checkout failed")
 	}
 
-	// Do sync
+	// Store head for safe push
+	head, err := outputRepo.Head()
+	orFatal(err, "determining head")
+	beforeRefspec := config.RefSpec(fmt.Sprintf("%s:%s", head.Hash(), headRefName))
 	log.Println()
-	log.Println("Sync changes:")
-	err = w.RemoveGlob(*outputRepoPath)
-	orFatal(err, "removing old artifacts")
-	if *outputRepoPath != "." && *outputRepoPath != "" {
-		outputFs, err = chrootMkdir(outputFs, *outputRepoPath)
-		orFatal(err, "failed to go to subdirectory")
-	}
-	err = copy(inputFs, outputFs)
-	orFatal(err, "copy files")
-	w.Add(*outputRepoPath)
 
-	// Commit
-	if *commitMsg == "" {
-		project := os.Getenv("CI_PROJECT_NAME")
-		if project == "" {
-			project, _ = os.Getwd()
-		}
-		refName := os.Getenv("CI_COMMIT_REF_NAME")
-		if refName == "" {
-			refName = "unknown"
-		}
-		*commitMsg = fmt.Sprintf("Sync %s/%s", project, refName)
-	}
-	status, err := w.Status()
-	orFatal(err, "status")
-	prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
-
+	// Commit options
 	var t time.Time = time.Now()
 	if *commitTime != "now" {
 		t, err = time.Parse(time.RFC3339, *commitTime)
 		orFatal(err, "parsing commit time with RFC3339/ISO8601 format")
 	}
-	hash, err := w.Commit(*commitMsg, &git.CommitOptions{
+	commitOpt := &git.CommitOptions{
 		Author: &object.Signature{
 			Name:  u.GetLogin(),
 			Email: firstStr(u.GetEmail(), fmt.Sprintf("%s@users.noreply.github.com", u.GetLogin())),
 			When:  t,
-		}})
-	orFatal(err, "committing")
-	log.Println("Created commit", hash.String())
-	obj, err := outputRepo.CommitObject(hash)
-	orFatal(err, "committing")
+		}}
+
+	// Do sync & commit
+	obj := sync(outputRepo, inputFs, commitOpt, *commitMsg)
+
+	// Commit
 	ref := plumbing.NewHashReference(headRefName, obj.Hash)
 	err = outputStorer.SetReference(ref)
 	orFatal(err, "creating ref")
@@ -183,21 +175,65 @@ func Main() {
 	refspec := config.RefSpec(fmt.Sprintf("%s:%s", ref.Name(), headRefName))
 	log.Printf("Pushing %s", refspec)
 	err = outputRepo.Push(&git.PushOptions{
-		RefSpecs: []config.RefSpec{refspec},
-		Auth:     gitAuth,
-		Progress: prefixw.New(os.Stderr, "> "),
-		Force:    true,
+		RefSpecs:          []config.RefSpec{refspec},
+		RequireRemoteRefs: []config.RefSpec{beforeRefspec},
+		Auth:              gitAuth,
+		Progress:          prefixw.New(os.Stderr, "> "),
 	})
 	orFatal(err, "pushing")
 	log.Println()
 
 	// Merge if requested
 	if *baseMerge != "" {
+		baseMergeRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *baseMerge))
 		log.Printf("Merging %s into %s...", headRefName.Short(), *baseMerge)
 		c, _, err := client.Repositories.Merge(ctx, orgName, repoName, &github.RepositoryMergeRequest{
 			Head: refStr(headRefName.Short()),
-			Base: baseMerge,
+			Base: refStr(baseMergeRefName.Short()),
 		})
+		// Merge conflict, try to resolve by taking "--ours"
+		if strings.Contains(err.Error(), "409") {
+			log.Printf("Fetching %s", baseMergeRefName.Short())
+			err = outputRepo.Fetch(&git.FetchOptions{
+				Auth:     gitAuth,
+				Progress: prefixw.New(os.Stderr, "> "),
+				RefSpecs: []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))},
+				Depth:    1,
+			})
+			if err == git.NoErrAlreadyUpToDate {
+				err = nil
+			}
+			orFatal(err, "fetching merge base")
+
+			// First checkout theirs
+			w.Checkout(&git.CheckoutOptions{
+				Branch: baseMergeRefName,
+				Force:  true,
+			})
+			baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
+			orFatal(err, "getting merge base")
+
+			// Draft merge commit opts
+			baseMergeBeforeHash := baseMergeRef.Hash()
+			commitOpt.Parents = []plumbing.Hash{baseMergeRef.Hash(), obj.Hash}
+			// Then sync again by overwriting with our inputFs
+			obj = sync(outputRepo, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
+			ref := plumbing.NewHashReference(baseMergeRefName, obj.Hash)
+			err = outputStorer.SetReference(ref)
+			orFatal(err, "updating ref (merged)")
+
+			// Push
+			refspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))
+			beforeRefspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeBeforeHash, baseMergeRefName))
+			log.Printf("Pushing %s", refspec)
+			err = outputRepo.Push(&git.PushOptions{
+				RefSpecs:          []config.RefSpec{refspec},
+				RequireRemoteRefs: []config.RefSpec{beforeRefspec},
+				Auth:              gitAuth,
+				Progress:          prefixw.New(os.Stderr, "> "),
+			})
+			orFatal(err, "pushing")
+		}
 		orFatal(err, "merging")
 		log.Println(c.Commit.GetMessage(), c.GetHTMLURL())
 		return
@@ -278,4 +314,34 @@ func firstStr(args ...string) string {
 		}
 	}
 	return ""
+}
+
+func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOptions, msg string) *object.Commit {
+	// Do sync
+	w, err := gr.Worktree()
+	outputFs := w.Filesystem
+
+	log.Println("Sync changes:")
+	err = w.RemoveGlob(*outputRepoPath)
+	orFatal(err, "removing old artifacts")
+	if *outputRepoPath != "." && *outputRepoPath != "" {
+		outputFs, err = chrootMkdir(outputFs, *outputRepoPath)
+		orFatal(err, "failed to go to subdirectory")
+	}
+	err = copy(inputFs, outputFs)
+	orFatal(err, "copy files")
+	w.Add(*outputRepoPath)
+
+	// Print status
+	status, err := w.Status()
+	orFatal(err, "status")
+	prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
+
+	// Commit
+	hash, err := w.Commit(msg, commitOpt)
+	orFatal(err, "committing")
+	log.Println("Created commit", hash.String())
+	obj, err := gr.CommitObject(hash)
+	orFatal(err, "committing")
+	return obj
 }
