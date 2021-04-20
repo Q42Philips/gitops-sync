@@ -69,8 +69,8 @@ func Main() {
 	if *outputHead == "" {
 		*outputHead = fmt.Sprintf("auto/sync/%s", time.Now().Format("20060102T150405Z"))
 	}
-	headRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *outputHead))
-	baseRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *outputBase))
+	headRefName := plumbing.NewBranchReferenceName(*outputHead)
+	baseRefName := plumbing.NewBranchReferenceName(*outputBase)
 	orgName, repoName, err := parseGitHubRepo(*outputRepo)
 	orFatal(err, "parsing url")
 
@@ -89,33 +89,24 @@ func Main() {
 	// Prepare output repository
 	outputStorer := memory.NewStorage()
 	outputFs := memfs.New()
-	log.Printf("Cloning %s (%s)", maskURL(*outputRepo), baseRefName)
+	log.Printf("Cloning %s", maskURL(*outputRepo))
 	outputRepo, err := git.Clone(outputStorer, outputFs, &git.CloneOptions{
-		Auth:          gitAuth,
-		Progress:      prefixw.New(os.Stderr, "> "),
-		URL:           *outputRepo,
-		ReferenceName: baseRefName,
-		Depth:         100,
+		Auth:     gitAuth,
+		Progress: prefixw.New(os.Stderr, "> "),
+		URL:      *outputRepo,
+		Depth:    10,
 	})
 	orFatal(err, "cloning")
 	log.Println()
 
-	log.Printf("Fetching %s", headRefName)
+	log.Printf("Fetching all refs (%s)", baseRefName)
 	err = outputRepo.Fetch(&git.FetchOptions{
 		Auth:     gitAuth,
-		Progress: prefixw.New(os.Stderr, "> "),
-		RefSpecs: []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", headRefName, headRefName))},
-		Depth:    100,
+		Progress: os.Stdout,
+		RefSpecs: []config.RefSpec{"refs/*:refs/*"},
+		Depth:    10,
 	})
-	if err == git.NoErrAlreadyUpToDate {
-		err = nil
-	} else if errors.Is(err, git.NoMatchingRefSpecError{}) {
-		log.Println(errors.Wrap(err, "fetching pre-existing head"))
-		err = nil
-	} else {
-		orFatal(err, "fetching pre-existing head")
-	}
-	log.Println()
+	orFatal(err, "fetching")
 
 	// Prepare begin state
 	inputFs := osfs.New(*inputPath)
