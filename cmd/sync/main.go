@@ -179,12 +179,25 @@ func Main() {
 		Auth:              gitAuth,
 		Progress:          prefixw.New(os.Stderr, "> "),
 	})
+	if err == git.NoErrAlreadyUpToDate {
+		log.Println("Nothing to push, already up to date")
+		err = nil
+	}
 	orFatal(err, "pushing")
 	log.Println()
 
 	// Merge if requested
 	if *baseMerge != "" {
+		// Possibly skip making merge if it is a no-op
 		baseMergeRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *baseMerge))
+		baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
+		orFatal(err, "fetching merge base ref")
+		baseMergeBeforeHash := baseMergeRef.Hash()
+		if baseMergeBeforeHash == obj.Hash {
+			log.Println("Skipping merge, already up to date")
+			return
+		}
+
 		log.Printf("Merging %s into %s...", headRefName.Short(), *baseMerge)
 		c, _, err := client.Repositories.Merge(ctx, orgName, repoName, &github.RepositoryMergeRequest{
 			Head: refStr(headRefName.Short()),
@@ -210,11 +223,9 @@ func Main() {
 				Branch: baseMergeRefName,
 				Force:  true,
 			})
-			baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
-			orFatal(err, fmt.Sprintf("worktree checkout to %s (unkown)", baseMergeRefName))
+			orFatal(err, fmt.Sprintf("worktree checkout to %s (unknown)", baseMergeRefName))
 
 			// Draft merge commit opts
-			baseMergeBeforeHash := baseMergeRef.Hash()
 			commitOpt.Parents = []plumbing.Hash{baseMergeBeforeHash, obj.Hash}
 			// Then sync again by overwriting with our inputFs
 			obj = sync(outputRepo, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
@@ -243,10 +254,10 @@ func Main() {
 
 	// Pull Request if requested
 	if *basePR != "" {
-
 		prs, _, err := client.PullRequests.List(ctx, orgName, repoName, &github.PullRequestListOptions{
-			Head: fmt.Sprintf("%s:%s", orgName, headRefName.Short()),
-			Base: *basePR,
+			Head:  fmt.Sprintf("%s:%s", orgName, headRefName.Short()),
+			Base:  *basePR,
+			State: "open",
 		})
 		orFatal(err, "getting existing prs")
 		if len(prs) > 0 {
@@ -254,6 +265,16 @@ func Main() {
 			for _, pr := range prs {
 				log.Println("-", pr.GetHTMLURL())
 			}
+			return
+		}
+
+		// Possibly skip making PR if it is a no-op
+		basePRRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *basePR))
+		basePRRef, err := outputRepo.Reference(basePRRefName, true)
+		orFatal(err, "fetching pr base ref")
+		basePRBeforeHash := basePRRef.Hash()
+		if basePRBeforeHash == obj.Hash {
+			log.Println("Skipping pr, already up to date")
 			return
 		}
 
