@@ -1,4 +1,4 @@
-# Sync cli
+# GitOps Sync cli
 This tools job is to copy provided artifacts to a GitOps repository.
 
 Settings/inputs:
@@ -8,7 +8,7 @@ Settings/inputs:
   1. git repository url
   2. path
   3. branch name
-	4. PR contents
+  4. PR contents
 
 You must ensure the git repository is writable by providing the right authorization, either via 1) the url, or 2) via a SSH private key, or 3) an OAuth token in `$GITHUB_TOKEN`.
 
