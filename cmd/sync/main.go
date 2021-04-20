@@ -241,6 +241,9 @@ func Main() {
 				Auth:              gitAuth,
 				Progress:          prefixw.New(os.Stderr, "> "),
 			})
+			if err == git.NoErrAlreadyUpToDate {
+				err = nil
+			}
 			orFatal(err, "pushing")
 			c, _, err = client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
 			orFatal(err, "getting custom merge commit")
