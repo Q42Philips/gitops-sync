@@ -323,7 +323,6 @@ func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOpt
 	w, err := gr.Worktree()
 	outputFs := w.Filesystem
 
-	log.Println("Sync changes:")
 	err = w.RemoveGlob(*outputRepoPath)
 	orFatal(err, "removing old artifacts")
 	if *outputRepoPath != "." && *outputRepoPath != "" {
@@ -336,9 +335,6 @@ func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOpt
 
 	// Print status
 	status, err := w.Status()
-	orFatal(err, "status")
-	prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
-
 	if len(status) == 0 {
 		log.Println("No changes. Skipping commit.")
 		head, err := gr.Head()
@@ -347,6 +343,10 @@ func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOpt
 		orFatal(err, "getting commit")
 		return obj
 	}
+
+	log.Println("Sync changes:")
+	orFatal(err, "status")
+	prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
 
 	// Commit
 	w.Status()
