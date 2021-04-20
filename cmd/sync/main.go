@@ -23,6 +23,13 @@ import (
 	"github.com/pkg/errors"
 )
 
+// version information added by Goreleaser
+var (
+	version = "development"
+	commit  = "development"
+)
+
+// flags
 var (
 	commitMsg      = flag.String("message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
 	inputPath      = flag.String("input-path", ".", "where to read artifacts from")
@@ -43,8 +50,9 @@ var (
 )
 
 func init() {
-	flag.Parse()
 	log.SetFlags(0)
+	log.Printf("Running gitops-sync %s (%s)", version, commit)
+	flag.Parse()
 
 	if *outputRepo == "" {
 		log.Fatal("No output repository set")
