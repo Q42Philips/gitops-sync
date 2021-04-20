@@ -1,4 +1,4 @@
-package main
+package sync
 
 import (
 	"context"
@@ -50,7 +50,7 @@ func init() {
 	}
 }
 
-func main() {
+func Main() {
 	client, gitAuth := getClientAuth()
 	ctx := context.Background()
 
