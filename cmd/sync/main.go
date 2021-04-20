@@ -34,6 +34,7 @@ var (
 	basePR         = flag.String("pr", "", "whether to create a PR, and if set, which branch to set as PR base")
 	baseMerge      = flag.String("merge", "", "whether to merge straight away, which branch to set as merge base")
 	prBody         = flag.String("pr-body", "Sync", "Body of PR")
+	prTitle        = flag.String("pr-title", "Sync", "Title of PR; defaults to commit message")
 	commitTime     = flag.String("commit-timestamp", "now", "Time of the commit; for example $CI_COMMIT_TIMESTAMP of the original commit")
 	dryRun         = flag.Bool("dry-run", false, "Do not push, merge, nor PR")
 	// Either use
@@ -284,7 +285,7 @@ func Main() {
 			Base:  basePR,
 			Draft: refBool(true),
 			Body:  prBody,
-			Title: commitMsg,
+			Title: refStr(firstStr(*prTitle, *commitMsg)),
 		}
 		pr, _, err := client.PullRequests.Create(ctx, orgName, repoName, &prTemplate)
 		orFatal(err, "creating pr")
