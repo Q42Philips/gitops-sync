@@ -192,6 +192,7 @@ func Main() {
 		})
 		// Merge conflict, try to resolve by taking "--ours"
 		if strings.Contains(err.Error(), "409") {
+			log.Printf("Merge conflict. Trying to resolve.")
 			log.Printf("Fetching %s", baseMergeRefName.Short())
 			err = outputRepo.Fetch(&git.FetchOptions{
 				Auth:     gitAuth,
