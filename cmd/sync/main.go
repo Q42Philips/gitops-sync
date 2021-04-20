@@ -166,8 +166,11 @@ func Main() {
 		orFatal(err, "parsing commit time with RFC3339/ISO8601 format")
 	}
 	hash, err := w.Commit(*commitMsg, &git.CommitOptions{
-		Author: &object.Signature{Name: u.GetLogin(), Email: u.GetEmail(), When: t},
-	})
+		Author: &object.Signature{
+			Name:  u.GetLogin(),
+			Email: firstStr(u.GetEmail(), fmt.Sprintf("%s@users.noreply.github.com", u.GetLogin())),
+			When:  t,
+		}})
 	orFatal(err, "committing")
 	log.Println("Created commit", hash.String())
 	obj, err := outputRepo.CommitObject(hash)
@@ -265,4 +268,13 @@ func refStr(inp string) *string {
 }
 func refBool(inp bool) *bool {
 	return &inp
+}
+
+func firstStr(args ...string) string {
+	for _, a := range args {
+		if a != "" {
+			return a
+		}
+	}
+	return ""
 }
