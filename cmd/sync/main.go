@@ -29,8 +29,8 @@ var (
 	outputRepoPath = flag.String("output-repo-path", ".", "where to write artifacts to")
 	outputBase     = flag.String("output-base", "develop", "reference to use as basis")
 	outputHead     = flag.String("output-head", "", "reference to write to & create a PR from into base; default = generated")
-	createPR       = flag.Bool("pr", false, "whether to create a PR")
-	doMerge        = flag.Bool("merge", false, "whether to merge straight away")
+	basePR         = flag.String("pr", "", "whether to create a PR, and if set, which branch to set as PR base")
+	baseMerge      = flag.String("merge", "", "whether to merge straight away, which branch to set as merge base")
 	prBody         = flag.String("pr-body", "Sync", "Body of PR")
 	commitTime     = flag.String("commit-timestamp", "now", "Time of the commit; for example $CI_COMMIT_TIMESTAMP of the original commit")
 	// Either use
@@ -154,7 +154,7 @@ func Main() {
 		if refName == "" {
 			refName = "unknown"
 		}
-		*commitMsg = fmt.Sprintf("Sync %s/%s to %s", project, refName, headRefName.Short())
+		*commitMsg = fmt.Sprintf("Sync %s/%s", project, refName)
 	}
 	status, err := w.Status()
 	orFatal(err, "status")
@@ -192,11 +192,11 @@ func Main() {
 	log.Println()
 
 	// Merge if requested
-	if *doMerge {
-		log.Printf("Merging %s into %s...", headRefName.Short(), baseRefName.Short())
+	if *baseMerge != "" {
+		log.Printf("Merging %s into %s...", headRefName.Short(), *baseMerge)
 		c, _, err := client.Repositories.Merge(ctx, orgName, repoName, &github.RepositoryMergeRequest{
 			Head: refStr(headRefName.Short()),
-			Base: refStr(baseRefName.Short()),
+			Base: baseMerge,
 		})
 		orFatal(err, "merging")
 		log.Println(c.Commit.GetMessage(), c.GetHTMLURL())
@@ -204,10 +204,11 @@ func Main() {
 	}
 
 	// Pull Request if requested
-	if *createPR {
+	if *basePR != "" {
+
 		prs, _, err := client.PullRequests.List(ctx, orgName, repoName, &github.PullRequestListOptions{
 			Head: fmt.Sprintf("%s:%s", orgName, headRefName.Short()),
-			Base: baseRefName.Short(),
+			Base: *basePR,
 		})
 		orFatal(err, "getting existing prs")
 		if len(prs) > 0 {
@@ -219,8 +220,8 @@ func Main() {
 		}
 
 		prTemplate := github.NewPullRequest{
-			Base:  refStr(baseRefName.Short()),
 			Head:  refStr(headRefName.Short()),
+			Base:  basePR,
 			Draft: refBool(true),
 			Body:  prBody,
 			Title: commitMsg,
