@@ -1,4 +1,4 @@
-package sync
+package gitlogic
 
 import (
 	"io"
@@ -7,7 +7,8 @@ import (
 	"github.com/go-git/go-billy/v5"
 )
 
-func chrootMkdir(fs billy.Filesystem, path string) (out billy.Filesystem, err error) {
+// ChrootMkdir creates the directory and descends, returning a chrooted filesystem to that dir
+func ChrootMkdir(fs billy.Filesystem, path string) (out billy.Filesystem, err error) {
 	if err = fs.MkdirAll(path, 1444); err != nil {
 		return nil, err
 	}
@@ -15,7 +16,8 @@ func chrootMkdir(fs billy.Filesystem, path string) (out billy.Filesystem, err er
 	return
 }
 
-func rmRecursively(fs billy.Filesystem, path string) error {
+// RmRecursively removes are directory recursively
+func RmRecursively(fs billy.Filesystem, path string) error {
 	st, err := fs.Stat(path)
 	// Already non-existing
 	if err == os.ErrNotExist {
@@ -37,14 +39,15 @@ func rmRecursively(fs billy.Filesystem, path string) error {
 			return err
 		}
 		for _, f := range files {
-			rmRecursively(chroot, f.Name())
+			RmRecursively(chroot, f.Name())
 		}
 	}
 	// Finally delete empty dir
 	return fs.Remove(path)
 }
 
-func copy(fs1 billy.Filesystem, fs2 billy.Filesystem) error {
+// Copy writes all files from fs1 to fs2
+func Copy(fs1 billy.Filesystem, fs2 billy.Filesystem) error {
 	files, err := fs1.ReadDir(".")
 	if err != nil {
 		return err
@@ -56,10 +59,10 @@ func copy(fs1 billy.Filesystem, fs2 billy.Filesystem) error {
 			if sub1, err = fs1.Chroot(f.Name()); err != nil {
 				return err
 			}
-			if sub2, err = chrootMkdir(fs2, f.Name()); err != nil {
+			if sub2, err = ChrootMkdir(fs2, f.Name()); err != nil {
 				return err
 			}
-			if err = copy(sub1, sub2); err != nil {
+			if err = Copy(sub1, sub2); err != nil {
 				return err
 			}
 		} else {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Q42Philips/gitops-sync/pkg/gitlogic"
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-billy/v5/osfs"
@@ -347,13 +348,13 @@ func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOpt
 	orFatal(err, "getting worktree")
 
 	outputFs := w.Filesystem
-	err = rmRecursively(outputFs, *outputRepoPath) // remove existing files
+	err = gitlogic.RmRecursively(outputFs, *outputRepoPath) // remove existing files
 	orFatal(err, "removing old artifacts")
 	if *outputRepoPath != "." && *outputRepoPath != "" {
-		outputFs, err = chrootMkdir(outputFs, *outputRepoPath)
+		outputFs, err = gitlogic.ChrootMkdir(outputFs, *outputRepoPath)
 		orFatal(err, "failed to go to subdirectory")
 	}
-	err = copy(inputFs, outputFs)
+	err = gitlogic.Copy(inputFs, outputFs)
 	orFatal(err, "copy files")
 	w.Add(*outputRepoPath)
 
