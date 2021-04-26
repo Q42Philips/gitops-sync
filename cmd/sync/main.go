@@ -347,7 +347,7 @@ func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOpt
 	orFatal(err, "getting worktree")
 
 	outputFs := w.Filesystem
-	err = outputFs.Remove(*outputRepoPath) // remove existing files
+	err = rmRecursively(outputFs, *outputRepoPath) // remove existing files
 	orFatal(err, "removing old artifacts")
 	if *outputRepoPath != "." && *outputRepoPath != "" {
 		outputFs, err = chrootMkdir(outputFs, *outputRepoPath)

@@ -2,6 +2,7 @@ package sync
 
 import (
 	"io"
+	"os"
 
 	"github.com/go-git/go-billy/v5"
 )
@@ -12,6 +13,35 @@ func chrootMkdir(fs billy.Filesystem, path string) (out billy.Filesystem, err er
 	}
 	out, err = fs.Chroot(path)
 	return
+}
+
+func rmRecursively(fs billy.Filesystem, path string) error {
+	st, err := fs.Stat(path)
+	// Already non-existing
+	if err == os.ErrNotExist {
+		return nil
+	}
+	// Not a dir
+	if !st.IsDir() {
+		return fs.Remove(path)
+	}
+	// Dir, list all files
+	files, err := fs.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	// Delete any files
+	if len(files) > 0 {
+		chroot, err := fs.Chroot(path)
+		if err != nil {
+			return err
+		}
+		for _, f := range files {
+			rmRecursively(chroot, f.Name())
+		}
+	}
+	// Finally delete empty dir
+	return fs.Remove(path)
 }
 
 func copy(fs1 billy.Filesystem, fs2 billy.Filesystem) error {
