@@ -344,9 +344,10 @@ func firstStr(args ...string) string {
 func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOptions, msg string) *object.Commit {
 	// Do sync
 	w, err := gr.Worktree()
-	outputFs := w.Filesystem
+	orFatal(err, "getting worktree")
 
-	err = w.RemoveGlob(*outputRepoPath)
+	outputFs := w.Filesystem
+	err = outputFs.Remove(*outputRepoPath) // remove existing files
 	orFatal(err, "removing old artifacts")
 	if *outputRepoPath != "." && *outputRepoPath != "" {
 		outputFs, err = chrootMkdir(outputFs, *outputRepoPath)
