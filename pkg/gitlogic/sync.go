@@ -58,9 +58,9 @@ func orFatal(err error, ctx string) {
 	}
 }
 
-// addAllFiles adds all files. Somehow w.AddWithOptions traverses only over
-// the filesystem, therefore not removing any non-existing files on the
-// filesystem from the index.
+// addAllFiles is "git add -A".
+// Somehow w.AddWithOptions traverses only over the filesystem, therefore
+// not removing any non-existing files on the filesystem from the index.
 func addAllFiles(w *git.Worktree) error {
 	files, err := w.Status()
 	if err != nil {
