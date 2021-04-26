@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Q42Philips/gitops-sync/pkg/gitlogic"
-	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
@@ -158,7 +157,7 @@ func Main() {
 	commitOpt := &git.CommitOptions{Author: signature, Committer: signature}
 
 	// Do sync & commit
-	obj := sync(outputRepo, inputFs, commitOpt, *commitMsg)
+	obj := gitlogic.Sync(outputRepo, *outputRepoPath, inputFs, commitOpt, *commitMsg)
 
 	// Commit
 	ref := plumbing.NewHashReference(headRefName, obj.Hash)
@@ -228,7 +227,7 @@ func Main() {
 			// Draft merge commit opts
 			commitOpt.Parents = []plumbing.Hash{baseMergeBeforeHash, obj.Hash}
 			// Then sync again by overwriting with our inputFs
-			obj = sync(outputRepo, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
+			obj = gitlogic.Sync(outputRepo, *outputRepoPath, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
 			ref := plumbing.NewHashReference(baseMergeRefName, obj.Hash)
 			err = outputStorer.SetReference(ref)
 			orFatal(err, "updating ref (merged)")
@@ -340,45 +339,4 @@ func firstStr(args ...string) string {
 		}
 	}
 	return ""
-}
-
-func sync(gr *git.Repository, inputFs billy.Filesystem, commitOpt *git.CommitOptions, msg string) *object.Commit {
-	// Do sync
-	w, err := gr.Worktree()
-	orFatal(err, "getting worktree")
-
-	outputFs := w.Filesystem
-	err = gitlogic.RmRecursively(outputFs, *outputRepoPath) // remove existing files
-	orFatal(err, "removing old artifacts")
-	if *outputRepoPath != "." && *outputRepoPath != "" {
-		outputFs, err = gitlogic.ChrootMkdir(outputFs, *outputRepoPath)
-		orFatal(err, "failed to go to subdirectory")
-	}
-	err = gitlogic.Copy(inputFs, outputFs)
-	orFatal(err, "copy files")
-	w.Add(*outputRepoPath)
-
-	// Print status
-	status, err := w.Status()
-	if len(status) == 0 {
-		log.Println("No changes. Skipping commit.")
-		head, err := gr.Head()
-		orFatal(err, "getting head")
-		obj, err := gr.CommitObject(head.Hash())
-		orFatal(err, "getting commit")
-		return obj
-	}
-
-	log.Println("Sync changes:")
-	orFatal(err, "status")
-	prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
-
-	// Commit
-	w.Status()
-	hash, err := w.Commit(msg, commitOpt)
-	orFatal(err, "committing")
-	log.Println("Created commit", hash.String())
-	obj, err := gr.CommitObject(hash)
-	orFatal(err, "getting commit")
-	return obj
 }
