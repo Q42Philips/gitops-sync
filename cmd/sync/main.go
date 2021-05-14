@@ -27,7 +27,7 @@ import (
 var (
 	commitMsg      = flag.String("message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
 	inputPath      = flag.String("input-path", ".", "where to read artifacts from")
-	outputRepo     = flag.String("output-repo", "", "where to write artifacts to")
+	outputRepoURL  = flag.String("output-repo", "", "where to write artifacts to")
 	outputRepoPath = flag.String("output-repo-path", ".", "where to write artifacts to")
 	outputBase     = flag.String("output-base", "develop", "reference to use as basis")
 	outputHead     = flag.String("output-head", "", "reference to write to & create a PR from into base; default = generated")
@@ -37,6 +37,7 @@ var (
 	prTitle        = flag.String("pr-title", "Sync", "Title of PR; defaults to commit message")
 	commitTime     = flag.String("commit-timestamp", "now", "Time of the commit; for example $CI_COMMIT_TIMESTAMP of the original commit")
 	dryRun         = flag.Bool("dry-run", false, "Do not push, merge, nor PR")
+	depth          = flag.Int("depth", 0, "Set the depth to do a shallow clone. Use with caution, go-git pushes can fail for shallow branches.")
 	// Either use
 	authUsername = flag.String("github-username", "", "GitHub username to use for basic auth")
 	authPassword = flag.String("github-password", "", "GitHub password to use for basic auth")
@@ -48,10 +49,12 @@ var (
 func init() {
 	flag.Parse()
 
-	if *outputRepo == "" {
+	if *outputRepoURL == "" {
 		log.Fatal("No output repository set")
 	}
 }
+
+var outputRepo *git.Repository
 
 func Main() {
 	client, gitAuth := getClientAuth()
@@ -72,7 +75,7 @@ func Main() {
 	}
 	headRefName := plumbing.NewBranchReferenceName(*outputHead)
 	baseRefName := plumbing.NewBranchReferenceName(*outputBase)
-	orgName, repoName, err := parseGitHubRepo(*outputRepo)
+	orgName, repoName, err := parseGitHubRepo(*outputRepoURL)
 	orFatal(err, "parsing url")
 
 	if *commitMsg == "" {
@@ -90,24 +93,24 @@ func Main() {
 	// Prepare output repository
 	outputStorer := memory.NewStorage()
 	outputFs := memfs.New()
-	log.Printf("Cloning %s", maskURL(*outputRepo))
-	outputRepo, err := git.Clone(outputStorer, outputFs, &git.CloneOptions{
+	log.Printf("Cloning %s", maskURL(*outputRepoURL))
+	outputRepo, err = git.Clone(outputStorer, outputFs, &git.CloneOptions{
 		Auth:     gitAuth,
 		Progress: prefixw.New(os.Stderr, "> "),
-		URL:      *outputRepo,
-		Depth:    10,
+		URL:      *outputRepoURL,
+		Depth:    *depth,
 	})
 	orFatal(err, "cloning")
 	log.Println()
 
-	log.Printf("Fetching all refs (%s)", baseRefName)
+	log.Println("Fetching all refs")
 	err = outputRepo.Fetch(&git.FetchOptions{
 		Auth:     gitAuth,
 		Progress: os.Stdout,
 		RefSpecs: []config.RefSpec{"refs/*:refs/*"},
-		Depth:    10,
+		Depth:    *depth,
 	})
-	orFatal(err, "fetching")
+	orFatal(err, "fetching (refs/*:refs/*)")
 
 	// Prepare begin state
 	inputFs := osfs.New(*inputPath)
@@ -171,8 +174,8 @@ func Main() {
 	}
 
 	// Push
-	refspec := config.RefSpec(fmt.Sprintf("%s:%s", ref.Name(), headRefName))
-	log.Printf("Pushing %s", refspec)
+	refspec := config.RefSpec(fmt.Sprintf("%s:%s", obj.Hash, headRefName))
+	log.Printf("Pushing %s with before-state %s", refspec, beforeRefspecs)
 	err = outputRepo.Push(&git.PushOptions{
 		RefSpecs:          []config.RefSpec{refspec},
 		RequireRemoteRefs: beforeRefspecs,
@@ -220,7 +223,7 @@ func Main() {
 		// Push
 		refspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))
 		beforeRefspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeBeforeHash, baseMergeRefName))
-		log.Printf("Pushing %s", refspec)
+		log.Printf("Pushing %s with before-state %s", refspec, beforeRefspec)
 		err = outputRepo.Push(&git.PushOptions{
 			RefSpecs:          []config.RefSpec{refspec},
 			RequireRemoteRefs: []config.RefSpec{beforeRefspec},
