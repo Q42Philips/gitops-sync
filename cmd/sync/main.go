@@ -111,6 +111,7 @@ func Main() {
 		Depth:    *depth,
 	})
 	orFatal(err, "fetching (refs/*:refs/*)")
+	log.Println()
 
 	// Prepare begin state
 	inputFs := osfs.New(*inputPath)
@@ -121,6 +122,7 @@ func Main() {
 	startRef, err = outputRepo.Reference(baseRefName, true)
 	orFatal(err, fmt.Sprintf("base branch %q does not exist, check your inputs", *outputBase))
 
+	log.Printf("Updating HEAD (%s)", *outputHead)
 	headRef, err := outputRepo.Reference(headRefName, true)
 	var beforeRefspecs []config.RefSpec = nil
 	if err == nil {
@@ -130,7 +132,7 @@ func Main() {
 		beforeRefspecs = []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", headRef.Hash(), headRefName))}
 		if headRef.Hash() != startRef.Hash() {
 			// Rebase existing head branch onto sync base by checking out the sync base before doing the sync again
-			log.Printf("Rebasing %s to %s, discarding commit %s", headRefName, startRef.Hash(), headRef.Hash())
+			log.Printf("Rebasing %s onto %s (commit %s), discarding commit %s", headRef.Name().Short(), startRef.Name().Short(), startRef.Hash(), headRef.Hash())
 		}
 		err = w.Checkout(&git.CheckoutOptions{Hash: startRef.Hash(), Force: true})
 		orFatal(err, fmt.Sprintf("worktree checkout to %s", startRef.Hash()))
@@ -164,9 +166,11 @@ func Main() {
 
 	// Do sync & commit
 	obj := gitlogic.Sync(outputRepo, *outputRepoPath, inputFs, commitOpt, *commitMsg)
+	log.Println()
 
-	// Commit
+	// Update reference
 	ref := plumbing.NewHashReference(headRefName, obj.Hash)
+	log.Printf("Setting ref %q to %s", ref.Name(), obj.Hash)
 	err = outputStorer.SetReference(ref)
 	orFatal(err, "creating ref")
 
@@ -176,11 +180,12 @@ func Main() {
 	}
 
 	// Push
-	refspec := config.RefSpec(fmt.Sprintf("%s:%s", obj.Hash, headRefName))
-	log.Printf("Pushing %s with before-state %s", refspec, beforeRefspecs)
+	refspec := config.RefSpec(fmt.Sprintf("%s:%s", headRefName, headRefName))
+	log.Printf("$ git push %s --force-with-lease\n  leases: %s", refspec, beforeRefspecs)
 	err = outputRepo.Push(&git.PushOptions{
 		RefSpecs:          []config.RefSpec{refspec},
 		RequireRemoteRefs: beforeRefspecs,
+		Force:             true,
 		Auth:              gitAuth,
 		Progress:          prefixw.New(os.Stderr, "> "),
 	})
@@ -193,6 +198,7 @@ func Main() {
 
 	// Merge if requested
 	if *baseMerge != "" {
+		log.Printf("Updating BASE (%s)", *baseMerge)
 		// Possibly skip making merge if it is a no-op
 		baseMergeRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *baseMerge))
 		baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
@@ -224,11 +230,12 @@ func Main() {
 
 		// Push
 		refspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))
-		beforeRefspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeBeforeHash, baseMergeRefName))
-		log.Printf("Pushing %s with before-state %s", refspec, beforeRefspec)
+		beforeRefspecs := []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", baseMergeBeforeHash, baseMergeRefName))}
+		log.Printf("$ git push %s --force-with-lease\n  leases: %s", refspec, beforeRefspecs)
 		err = outputRepo.Push(&git.PushOptions{
 			RefSpecs:          []config.RefSpec{refspec},
-			RequireRemoteRefs: []config.RefSpec{beforeRefspec},
+			RequireRemoteRefs: beforeRefspecs,
+			Force:             true,
 			Auth:              gitAuth,
 			Progress:          prefixw.New(os.Stderr, "> "),
 		})
@@ -238,8 +245,7 @@ func Main() {
 		orFatal(err, "pushing")
 		c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
 		orFatal(err, "getting custom merge commit")
-		log.Println(c.Commit.GetMessage(), c.GetHTMLURL())
-		return
+		defer func() { log.Printf("Browse %s %q", c.GetHTMLURL(), c.Commit.GetMessage()) }()
 	}
 
 	// Pull Request if requested
@@ -277,8 +283,9 @@ func Main() {
 		}
 		pr, _, err := client.PullRequests.Create(ctx, orgName, repoName, &prTemplate)
 		orFatal(err, "creating pr")
-		log.Println(pr.GetHTMLURL())
+		defer func() { log.Printf("Browse %s", pr.GetHTMLURL()) }()
 	}
+	log.Println()
 }
 
 func orFatal(err error, ctx string) {
