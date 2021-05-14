@@ -194,6 +194,9 @@ func Main() {
 		err = nil
 	}
 	orFatal(err, "pushing")
+	c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
+	orFatal(err, "getting sync commit")
+	defer func() { log.Printf("Browse %s %q", c.GetHTMLURL(), c.Commit.GetMessage()) }()
 	log.Println()
 
 	// Merge if requested
@@ -243,7 +246,7 @@ func Main() {
 			err = nil
 		}
 		orFatal(err, "pushing")
-		c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
+		c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, mergeCommit.Hash.String())
 		orFatal(err, "getting custom merge commit")
 		defer func() { log.Printf("Browse %s %q", c.GetHTMLURL(), c.Commit.GetMessage()) }()
 	}
@@ -334,4 +337,28 @@ func firstStr(args ...string) string {
 		}
 	}
 	return ""
+}
+
+// BackoffRetried tries a function 3 times and backs off while retrying
+func BackoffRetried(fn func() error) (err error) {
+	remaining := 3
+	backoff := time.Millisecond * 100
+	for {
+		// try
+		err = fn()
+		if err == nil {
+			return nil
+		}
+
+		// abort after retries
+		remaining--
+		if remaining < 0 {
+			break
+		}
+
+		// retry after sleeping
+		time.Sleep(backoff)
+		backoff = backoff * 2
+	}
+	return err
 }
