@@ -123,13 +123,15 @@ func Main() {
 
 	headRef, err := outputRepo.Reference(headRefName, true)
 	var beforeRefspecs []config.RefSpec = nil
-	if err == nil && !headRef.Hash().IsZero() {
+	if err == nil {
 		// Reuse existing head branch
 		log.Printf("Using %s as existing head", headRefName)
 		// Store current head for safe push
 		beforeRefspecs = []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", headRef.Hash(), headRefName))}
-		// Rebase existing head branch onto sync base by checking out the sync base before doing the sync again
-		log.Printf("Rebasing %s to %s, discarding commit %s", headRefName, startRef.Hash(), headRef.Hash())
+		if headRef.Hash() != startRef.Hash() {
+			// Rebase existing head branch onto sync base by checking out the sync base before doing the sync again
+			log.Printf("Rebasing %s to %s, discarding commit %s", headRefName, startRef.Hash(), headRef.Hash())
+		}
 		err = w.Checkout(&git.CheckoutOptions{Hash: startRef.Hash(), Force: true})
 		orFatal(err, fmt.Sprintf("worktree checkout to %s", startRef.Hash()))
 	} else if err == plumbing.ErrReferenceNotFound {
