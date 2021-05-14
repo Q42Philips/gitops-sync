@@ -123,12 +123,12 @@ func Main() {
 	if err == nil && !headRef.Hash().IsZero() {
 		// Reuse existing head branch
 		log.Printf("Using %s as existing head", headRefName)
-		err = w.Checkout(&git.CheckoutOptions{
-			Branch: headRefName,
-		})
-		orFatal(err, fmt.Sprintf("worktree checkout to %s (%s)", headRefName, headRef.Hash()))
 		// Store current head for safe push
 		beforeRefspecs = []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", headRef.Hash(), headRefName))}
+		// Rebase existing head branch onto sync base by checking out the sync base before doing the sync again
+		log.Printf("Rebasing %s to %s, discarding commit %s", headRefName, startRef.Hash(), headRef.Hash())
+		err = w.Checkout(&git.CheckoutOptions{Hash: startRef.Hash(), Force: true})
+		orFatal(err, fmt.Sprintf("worktree checkout to %s", startRef.Hash()))
 	} else if err == plumbing.ErrReferenceNotFound {
 		// Create new head branch
 		log.Printf("Creating head branch %s from base %s", headRefName, baseRefName)
@@ -146,6 +146,7 @@ func Main() {
 	// Commit options
 	var t time.Time = time.Now()
 	if *commitTime != "now" {
+		// Allow a configured commit time to allow aligning GitOps commits to the original repo commit
 		t, err = time.Parse(time.RFC3339, *commitTime)
 		orFatal(err, "parsing commit time with RFC3339/ISO8601 format")
 	}
@@ -197,59 +198,41 @@ func Main() {
 			return
 		}
 
+		// We merge by taking "--theirs" (to prevent issues where re-syncs don't overwrite because the commit already is in upstream)
 		log.Printf("Merging %s into %s...", headRefName.Short(), *baseMerge)
-		c, _, err := client.Repositories.Merge(ctx, orgName, repoName, &github.RepositoryMergeRequest{
-			Head: refStr(headRefName.Short()),
-			Base: refStr(baseMergeRefName.Short()),
+
+		// First checkout "ours" (the merge base)
+		w.Checkout(&git.CheckoutOptions{Hash: baseMergeRef.Hash(), Force: true})
+		orFatal(err, fmt.Sprintf("worktree checkout to merge base %s (%s)", baseMergeRef.Name().Short(), baseMergeRef.Hash().String()))
+
+		// Draft merge commit opts
+		commitOpt.Parents = []plumbing.Hash{baseMergeRef.Hash(), obj.Hash}
+		commitOpt.Author.When = time.Now() // use current time
+		commitOpt.Committer.When = commitOpt.Author.When
+		// Then sync again by overwriting with our inputFs
+		mergeCommit := gitlogic.Sync(outputRepo, *outputRepoPath, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
+
+		// Update ref
+		ref := plumbing.NewHashReference(baseMergeRefName, mergeCommit.Hash)
+		err = outputStorer.SetReference(ref)
+		orFatal(err, "updating ref (merged)")
+
+		// Push
+		refspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))
+		beforeRefspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeBeforeHash, baseMergeRefName))
+		log.Printf("Pushing %s", refspec)
+		err = outputRepo.Push(&git.PushOptions{
+			RefSpecs:          []config.RefSpec{refspec},
+			RequireRemoteRefs: []config.RefSpec{beforeRefspec},
+			Auth:              gitAuth,
+			Progress:          prefixw.New(os.Stderr, "> "),
 		})
-		// Merge conflict, try to resolve by taking "--ours"
-		if err != nil && strings.Contains(err.Error(), "409") {
-			log.Printf("Merge conflict. Trying to resolve.")
-			log.Printf("Fetching %s", baseMergeRefName.Short())
-			err = outputRepo.Fetch(&git.FetchOptions{
-				Auth:     gitAuth,
-				Progress: prefixw.New(os.Stderr, "> "),
-				RefSpecs: []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))},
-				Depth:    1,
-			})
-			if err == git.NoErrAlreadyUpToDate {
-				err = nil
-			}
-			orFatal(err, "fetching merge base")
-
-			// First checkout theirs
-			w.Checkout(&git.CheckoutOptions{
-				Branch: baseMergeRefName,
-				Force:  true,
-			})
-			orFatal(err, fmt.Sprintf("worktree checkout to %s (unknown)", baseMergeRefName))
-
-			// Draft merge commit opts
-			commitOpt.Parents = []plumbing.Hash{baseMergeBeforeHash, obj.Hash}
-			// Then sync again by overwriting with our inputFs
-			obj = gitlogic.Sync(outputRepo, *outputRepoPath, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
-			ref := plumbing.NewHashReference(baseMergeRefName, obj.Hash)
-			err = outputStorer.SetReference(ref)
-			orFatal(err, "updating ref (merged)")
-
-			// Push
-			refspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))
-			beforeRefspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeBeforeHash, baseMergeRefName))
-			log.Printf("Pushing %s", refspec)
-			err = outputRepo.Push(&git.PushOptions{
-				RefSpecs:          []config.RefSpec{refspec},
-				RequireRemoteRefs: []config.RefSpec{beforeRefspec},
-				Auth:              gitAuth,
-				Progress:          prefixw.New(os.Stderr, "> "),
-			})
-			if err == git.NoErrAlreadyUpToDate {
-				err = nil
-			}
-			orFatal(err, "pushing")
-			c, _, err = client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
-			orFatal(err, "getting custom merge commit")
+		if err == git.NoErrAlreadyUpToDate {
+			err = nil
 		}
-		orFatal(err, "merging")
+		orFatal(err, "pushing")
+		c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
+		orFatal(err, "getting custom merge commit")
 		log.Println(c.Commit.GetMessage(), c.GetHTMLURL())
 		return
 	}
