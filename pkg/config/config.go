@@ -34,6 +34,9 @@ func init() {
 	flag.BoolVar(&Global.DryRun, "dry-run", false, "Do not push, merge, nor PR")
 	flag.IntVar(&Global.Depth, "depth", 0, "Set the depth to do a shallow clone. Use with caution, go-git pushes can fail for shallow branches.")
 
+	// Wait for tags
+	flag.StringVar(&Global.WaitForTags, "wait-for-tags", "", "Wait for certain tags to update (glob patterns supported): example flux-sync or gke_myproject_*")
+
 	// Authentication
 	// Either use
 	flag.StringVar(&Global.AuthUsername, "github-username", "", "GitHub username to use for basic auth")
@@ -59,6 +62,8 @@ type Config struct {
 
 	DryRun bool
 	Depth  int
+
+	WaitForTags string
 
 	AuthUsername string
 	AuthPassword string
