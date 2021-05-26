@@ -35,7 +35,7 @@ func init() {
 	flag.IntVar(&Global.Depth, "depth", 0, "Set the depth to do a shallow clone. Use with caution, go-git pushes can fail for shallow branches.")
 
 	// Wait for tags
-	flag.StringVar(&Global.WaitForTags, "wait-for-tags", "", "Wait for certain tags to update (glob patterns supported): example flux-sync or gke_myproject_*")
+	flag.Var(&Global.WaitForTags, "wait-for-tags", "Wait for certain tags to update (glob patterns supported): example flux-sync or gke_myproject_*")
 
 	// Authentication
 	// Either use
@@ -63,7 +63,7 @@ type Config struct {
 	DryRun bool
 	Depth  int
 
-	WaitForTags string
+	WaitForTags GlobValue
 
 	AuthUsername string
 	AuthPassword string
