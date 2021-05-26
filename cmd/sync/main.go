@@ -40,8 +40,11 @@ func Main(Global Config) (result Result, err error) {
 		}
 	}()
 
-	client, gitAuth := Global.GetClientAuth()
 	ctx := context.Background()
+	client, gitAuth, err := Global.GetClientAuth()
+	if err != nil {
+		log.Panic(err)
+	}
 
 	// Test auth
 	u, _, err := client.Users.Get(ctx, "")

@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
 	"github.com/Q42Philips/gitops-sync/cmd/sync"
-	"github.com/Q42Philips/gitops-sync/cmd/wait"
 	. "github.com/Q42Philips/gitops-sync/pkg/config"
+	"github.com/Q42Philips/gitops-sync/pkg/gitlogic"
 )
 
 // version information added by Goreleaser
@@ -18,7 +19,6 @@ var (
 func init() {
 	log.SetFlags(0)
 	log.Printf("Running gitops-sync %s (%s)", version, commit)
-	Global.ParseAndValidate()
 }
 
 func main() {
@@ -30,6 +30,11 @@ func main() {
 	}
 
 	if Global.WaitForTags.Glob != nil {
-		wait.Main(Global, result.Commit, result.Repository)
+		err = gitlogic.WaitForTags(context.Background(), Global, result.Commit, result.Repository)
+		if err != nil {
+			os.Exit(1)
+		} else {
+			os.Exit(0)
+		}
 	}
 }

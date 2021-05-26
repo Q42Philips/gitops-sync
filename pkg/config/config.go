@@ -1,13 +1,12 @@
 package config
 
 import (
-	"log"
-	"os"
-	"time"
-
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/jnovack/flag"
 
@@ -18,32 +17,37 @@ import (
 var Global Config
 
 func init() {
-	// flags
-	flag.StringVar(&Global.CommitMsg, "message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
-	flag.StringVar(&Global.InputPath, "input-path", ".", "where to read artifacts from")
-	flag.StringVar(&Global.OutputRepoURL, "output-repo", "", "where to write artifacts to")
-	flag.StringVar(&Global.OutputRepoPath, "output-repo-path", ".", "where to write artifacts to")
-	flag.StringVar(&Global.OutputBase, "output-base", "develop", "reference to use as basis")
-	flag.StringVar(&Global.OutputHead, "output-head", "", "reference to write to & create a PR from into base; default = generated")
-	flag.StringVar(&Global.BasePR, "pr", "", "whether to create a PR, and if set, which branch to set as PR base")
-	flag.StringVar(&Global.BaseMerge, "merge", "", "whether to merge straight away, which branch to set as merge base")
-	flag.StringVar(&Global.PrBody, "pr-body", "Sync", "Body of PR")
-	flag.StringVar(&Global.PrTitle, "pr-title", "Sync", "Title of PR; defaults to commit message")
-	flag.Var(&Global.CommitTime, "commit-timestamp", "Time of the commit; for example $CI_COMMIT_TIMESTAMP of the original commit (default: now)")
+	Global.Init()
+	Global.ParseAndValidate()
+}
 
-	flag.BoolVar(&Global.DryRun, "dry-run", false, "Do not push, merge, nor PR")
-	flag.IntVar(&Global.Depth, "depth", 0, "Set the depth to do a shallow clone. Use with caution, go-git pushes can fail for shallow branches.")
+func (c *Config) Init() {
+	// flags
+	flag.StringVar(&c.CommitMsg, "message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
+	flag.StringVar(&c.InputPath, "input-path", ".", "where to read artifacts from")
+	flag.StringVar(&c.OutputRepoURL, "output-repo", "", "where to write artifacts to")
+	flag.StringVar(&c.OutputRepoPath, "output-repo-path", ".", "where to write artifacts to")
+	flag.StringVar(&c.OutputBase, "output-base", "develop", "reference to use as basis")
+	flag.StringVar(&c.OutputHead, "output-head", "", "reference to write to & create a PR from into base; default = generated")
+	flag.StringVar(&c.BasePR, "pr", "", "whether to create a PR, and if set, which branch to set as PR base")
+	flag.StringVar(&c.BaseMerge, "merge", "", "whether to merge straight away, which branch to set as merge base")
+	flag.StringVar(&c.PrBody, "pr-body", "Sync", "Body of PR")
+	flag.StringVar(&c.PrTitle, "pr-title", "Sync", "Title of PR; defaults to commit message")
+	flag.Var(&c.CommitTime, "commit-timestamp", "Time of the commit; for example $CI_COMMIT_TIMESTAMP of the original commit (default: now)")
+
+	flag.BoolVar(&c.DryRun, "dry-run", false, "Do not push, merge, nor PR")
+	flag.IntVar(&c.Depth, "depth", 0, "Set the depth to do a shallow clone. Use with caution, go-git pushes can fail for shallow branches.")
 
 	// Wait for tags
-	flag.Var(&Global.WaitForTags, "wait-for-tags", "Wait for certain tags to update (glob patterns supported): example flux-sync or gke_myproject_*")
+	flag.Var(&c.WaitForTags, "wait-for-tags", "Wait for certain tags to update (glob patterns supported): example flux-sync or gke_myproject_*")
 
 	// Authentication
 	// Either use
-	flag.StringVar(&Global.AuthUsername, "github-username", "", "GitHub username to use for basic auth")
-	flag.StringVar(&Global.AuthPassword, "github-password", "", "GitHub password to use for basic auth")
-	flag.StringVar(&Global.AuthOtp, "github-otp", "", "GitHub OTP to use for basic auth")
+	flag.StringVar(&c.AuthUsername, "github-username", "", "GitHub username to use for basic auth")
+	flag.StringVar(&c.AuthPassword, "github-password", "", "GitHub password to use for basic auth")
+	flag.StringVar(&c.AuthOtp, "github-otp", "", "GitHub OTP to use for basic auth")
 	// Or use
-	flag.StringVar(&Global.AuthToken, "github-token", "", "GitHub token, authorize using env $GITHUB_TOKEN (convention)")
+	flag.StringVar(&c.AuthToken, "github-token", "", "GitHub token, authorize using env $GITHUB_TOKEN (convention)")
 }
 
 type Config struct {
@@ -92,7 +96,7 @@ func (c *Config) ParseAndValidate() {
 	}
 }
 
-func (c *Config) GetClientAuth() (hubClient *github.Client, gitAuth githttp.AuthMethod) {
+func (c *Config) GetClientAuth() (hubClient *github.Client, gitAuth githttp.AuthMethod, err error) {
 	if Global.AuthUsername != "" {
 		hubAuth := &github.BasicAuthTransport{Username: c.AuthUsername, Password: c.AuthPassword, OTP: c.AuthOtp}
 		hubClient = github.NewClient(hubAuth.Client())
@@ -102,10 +106,10 @@ func (c *Config) GetClientAuth() (hubClient *github.Client, gitAuth githttp.Auth
 		hubClient = github.NewClient(hubAuth.Client())
 		gitAuth = &BasicAuthWrapper{hubAuth}
 	} else {
-		log.Fatal("No authentication provided. See help for authentication options.")
+		return nil, nil, errors.New("no authentication provided, see help for authentication options")
 	}
 	log.Println(gitAuth.String())
-	return hubClient, gitAuth
+	return hubClient, gitAuth, nil
 }
 
 var _ githttp.AuthMethod = &BasicAuthWrapper{}
