@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/Q42Philips/gitops-sync/cmd/sync"
+	"github.com/Q42Philips/gitops-sync/cmd/wait"
 	. "github.com/Q42Philips/gitops-sync/pkg/config"
 )
 
@@ -26,5 +27,9 @@ func main() {
 		os.Exit(1)
 	} else {
 		os.Stdout.Write([]byte(result.Commit.String()))
+	}
+
+	if Global.WaitForTags.Glob != nil {
+		wait.Main(Global, result.Commit, result.Repository)
 	}
 }

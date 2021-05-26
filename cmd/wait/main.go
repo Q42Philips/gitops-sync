@@ -1,4 +1,4 @@
-package sync
+package wait
 
 import (
 	"context"
@@ -6,93 +6,57 @@ import (
 	"os"
 	"time"
 
+	. "github.com/Q42Philips/gitops-sync/pkg/config"
 	"github.com/Q42Philips/gitops-sync/pkg/githubutil"
-	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/storage/memory"
-	"github.com/gobwas/glob"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/google/go-github/v33/github"
-	"github.com/jnovack/flag"
-	"github.com/koron-go/prefixw"
 	"github.com/pkg/errors"
 )
 
-// flags
-var (
-	outputRepoURL = flag.String("output-repo", "", "where to write artifacts to")
-	depth         = flag.Int("depth", 0, "Set the depth to do a shallow clone. Use with caution, go-git pushes can fail for shallow branches.")
+func Main(Global Config, commit plumbing.Hash, repo *git.Repository) {
+	client, gitAuth := Global.GetClientAuth()
+	ctx := context.Background()
 
-	// Wait for tags
-	waitForTags = flag.String("wait-for-tags", "", "Wait for certain tags to update (glob patterns supported): example flux-sync or gke_myproject_*")
-)
-
-func init() {
-	flag.Parse()
-
-	if *outputRepoURL == "" {
-		log.Fatal("No output repository set")
-	}
-}
-
-func main() {
-	orgName, repoName, err := githubutil.ParseGitHubRepo(*outputRepoURL)
+	orgName, repoName, err := githubutil.ParseGitHubRepo(Global.OutputRepoURL)
 	orFatal(err, "parsing url")
 
-	var tagsGlob glob.Glob
-	if waitForTags != nil && *waitForTags != "" {
-		tagsGlob = glob.MustCompile(*waitForTags)
-	}
-
-	// Prepare output repository
-	outputStorer := memory.NewStorage()
-	outputFs := memfs.New()
-	log.Printf("Cloning %s", maskURL(*outputRepoURL))
-	outputRepo, err = git.Clone(outputStorer, outputFs, &git.CloneOptions{
-		Auth:     gitAuth,
-		Progress: prefixw.New(os.Stderr, "> "),
-		URL:      *outputRepoURL,
-		Depth:    *depth,
-	})
-	orFatal(err, "cloning")
-	log.Println()
-
-	log.Println("Fetching all refs")
-	err = outputRepo.Fetch(&git.FetchOptions{
+	log.Println("Fetching tags refs")
+	err = repo.Fetch(&git.FetchOptions{
 		Auth:     gitAuth,
 		Progress: os.Stdout,
-		RefSpecs: []config.RefSpec{"refs/*:refs/*"},
-		Depth:    *depth,
+		RefSpecs: []config.RefSpec{"refs/tags/*:refs/tags/*"},
+		Depth:    Global.Depth,
+		Force:    true,
 	})
 	orFatal(err, "fetching (refs/*:refs/*)")
 	log.Println()
 
 	// Wait for all matching tags their history to include commit created above
-	if tagsGlob != nil {
-		watchedTags := make(map[string]*github.RepositoryTag)
-		forEachTag(ctx, client, orgName, repoName, func(rt *github.RepositoryTag) {
-			if tagsGlob.Match(rt.GetName()) {
-				log.Println("Waiting for tag %s to include commit %q", rt.GetName(), obj.Hash.String())
-				watchedTags[rt.GetName()] = rt
-			}
-		})
-		if len(watchedTags) == 0 {
-			log.Println("Found no matching tags to wait for. Done.")
-			return
+	watchedTags := make(map[string]*github.RepositoryTag)
+	forEachTag(ctx, client, orgName, repoName, func(rt *github.RepositoryTag) {
+		if Global.WaitForTags.Match(rt.GetName()) {
+			log.Println("Waiting for tag %s to include commit %q", rt.GetName(), obj.Hash.String())
+			watchedTags[rt.GetName()] = rt
 		}
-		for {
-			time.Sleep(1 * time.Second)
-			log.Println("Fetching tags from origin")
-			err = outputRepo.Fetch(&git.FetchOptions{
-				Auth:     gitAuth,
-				Progress: os.Stdout,
-				RefSpecs: []config.RefSpec{"refs/tags/*:refs/tags/*"},
-				Depth:    *depth,
-				Force:    true,
-			})
-			for tagName := range watchedTags {
+	})
+	if len(watchedTags) == 0 {
+		log.Println("Found no matching tags to wait for. Done.")
+		return
+	}
+	for {
+		time.Sleep(1 * time.Second)
+		log.Println("Fetching tags from origin")
+		err = repo.Fetch(&git.FetchOptions{
+			Auth:     gitAuth,
+			Progress: os.Stdout,
+			RefSpecs: []config.RefSpec{"refs/tags/*:refs/tags/*"},
+			Depth:    Global.Depth,
+			Force:    true,
+		})
+		for tagName := range watchedTags {
 
-			}
 		}
 	}
 }
