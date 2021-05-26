@@ -23,13 +23,23 @@ import (
 	"github.com/pkg/errors"
 )
 
-func init() {
-	Global.ParseAndValidate()
-}
-
 var outputRepo *git.Repository
 
-func Main() {
+type Result struct {
+	Commit     plumbing.Hash
+	Repository *git.Repository
+}
+
+func Main(Global Config) (result Result, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			var isErr bool
+			if err, isErr = r.(error); !isErr {
+				err = fmt.Errorf("%s", fmt.Sprint(r))
+			}
+		}
+	}()
+
 	client, gitAuth := Global.GetClientAuth()
 	ctx := context.Background()
 
@@ -45,7 +55,7 @@ func Main() {
 	headRefName := plumbing.NewBranchReferenceName(Global.OutputHead)
 	baseRefName := plumbing.NewBranchReferenceName(Global.OutputBase)
 	orgName, repoName, err := githubutil.ParseGitHubRepo(Global.OutputRepoURL)
-	orFatal(err, "parsing url")
+	orPanic(err, "parsing url")
 
 	// Prepare output repository
 	outputStorer := memory.NewStorage()
@@ -57,7 +67,8 @@ func Main() {
 		URL:      Global.OutputRepoURL,
 		Depth:    Global.Depth,
 	})
-	orFatal(err, "cloning")
+	result.Repository = *outputRepo
+	orPanic(err, "cloning")
 	log.Println()
 
 	log.Println("Fetching all refs")
@@ -67,17 +78,17 @@ func Main() {
 		RefSpecs: []config.RefSpec{"refs/*:refs/*"},
 		Depth:    Global.Depth,
 	})
-	orFatal(err, "fetching (refs/*:refs/*)")
+	orPanic(err, "fetching (refs/*:refs/*)")
 	log.Println()
 
 	// Prepare begin state
 	inputFs := osfs.New(Global.InputPath)
 	w, err := outputRepo.Worktree()
-	orFatal(err, "worktree")
+	orPanic(err, "worktree")
 
 	var startRef *plumbing.Reference
 	startRef, err = outputRepo.Reference(baseRefName, true)
-	orFatal(err, fmt.Sprintf("base branch %q does not exist, check your inputs", Global.OutputBase))
+	orPanic(err, fmt.Sprintf("base branch %q does not exist, check your inputs", Global.OutputBase))
 
 	log.Printf("Updating HEAD (%s)", Global.OutputHead)
 	headRef, err := outputRepo.Reference(headRefName, true)
@@ -92,7 +103,7 @@ func Main() {
 			log.Printf("Rebasing %s onto %s (commit %s), discarding commit %s", headRef.Name().Short(), startRef.Name().Short(), startRef.Hash(), headRef.Hash())
 		}
 		err = w.Checkout(&git.CheckoutOptions{Hash: startRef.Hash(), Force: true})
-		orFatal(err, fmt.Sprintf("worktree checkout to %s", startRef.Hash()))
+		orPanic(err, fmt.Sprintf("worktree checkout to %s", startRef.Hash()))
 	} else if err == plumbing.ErrReferenceNotFound {
 		// Create new head branch
 		log.Printf("Creating head branch %s from base %s", headRefName, baseRefName)
@@ -101,9 +112,9 @@ func Main() {
 			Hash:   startRef.Hash(),
 			Create: true,
 		})
-		orFatal(err, fmt.Sprintf("worktree checkout to %s := %s", headRefName, startRef.Hash()))
+		orPanic(err, fmt.Sprintf("worktree checkout to %s := %s", headRefName, startRef.Hash()))
 	} else {
-		orFatal(err, "worktree checkout failed")
+		orPanic(err, "worktree checkout failed")
 	}
 	log.Println()
 
@@ -123,7 +134,7 @@ func Main() {
 	ref := plumbing.NewHashReference(headRefName, obj.Hash)
 	log.Printf("Setting ref %q to %s", ref.Name(), obj.Hash)
 	err = outputStorer.SetReference(ref)
-	orFatal(err, "creating ref")
+	orPanic(err, "creating ref")
 
 	if Global.DryRun {
 		log.Println("Stopping now because of dry-run")
@@ -144,9 +155,9 @@ func Main() {
 		log.Println("Nothing to push, already up to date")
 		err = nil
 	}
-	orFatal(err, "pushing")
+	orPanic(err, "pushing")
 	c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
-	orFatal(err, "getting sync commit")
+	orPanic(err, "getting sync commit")
 	defer func() { log.Printf("Browse %s %q", c.GetHTMLURL(), c.Commit.GetMessage()) }()
 	log.Println()
 
@@ -156,11 +167,11 @@ func Main() {
 		// Possibly skip making merge if it is a no-op
 		baseMergeRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", Global.BaseMerge))
 		baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
-		orFatal(err, "fetching merge base ref")
+		orPanic(err, "fetching merge base ref")
 		baseMergeBeforeHash := baseMergeRef.Hash()
 		if baseMergeBeforeHash == obj.Hash {
 			log.Println("Skipping merge, already up to date")
-			return
+			return Result{Commit: obj.Hash}, nil
 		}
 
 		// We merge by taking "--theirs" (to prevent issues where re-syncs don't overwrite because the commit already is in upstream)
@@ -168,7 +179,7 @@ func Main() {
 
 		// First checkout "ours" (the merge base)
 		w.Checkout(&git.CheckoutOptions{Hash: baseMergeRef.Hash(), Force: true})
-		orFatal(err, fmt.Sprintf("worktree checkout to merge base %s (%s)", baseMergeRef.Name().Short(), baseMergeRef.Hash().String()))
+		orPanic(err, fmt.Sprintf("worktree checkout to merge base %s (%s)", baseMergeRef.Name().Short(), baseMergeRef.Hash().String()))
 
 		// Draft merge commit opts
 		commitOpt.Parents = []plumbing.Hash{baseMergeRef.Hash(), obj.Hash}
@@ -180,7 +191,7 @@ func Main() {
 		// Update ref
 		ref := plumbing.NewHashReference(baseMergeRefName, mergeCommit.Hash)
 		err = outputStorer.SetReference(ref)
-		orFatal(err, "updating ref (merged)")
+		orPanic(err, "updating ref (merged)")
 
 		// Push
 		refspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))
@@ -196,9 +207,9 @@ func Main() {
 		if err == git.NoErrAlreadyUpToDate {
 			err = nil
 		}
-		orFatal(err, "pushing")
+		orPanic(err, "pushing")
 		c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, mergeCommit.Hash.String())
-		orFatal(err, "getting custom merge commit")
+		orPanic(err, "getting custom merge commit")
 		defer func() { log.Printf("Browse %s %q", c.GetHTMLURL(), c.Commit.GetMessage()) }()
 	}
 
@@ -209,23 +220,23 @@ func Main() {
 			Base:  Global.BasePR,
 			State: "open",
 		})
-		orFatal(err, "getting existing prs")
+		orPanic(err, "getting existing prs")
 		if len(prs) > 0 {
 			log.Println("Existing PRs:")
 			for _, pr := range prs {
 				log.Println("-", pr.GetHTMLURL())
 			}
-			return
+			return Result{Commit: obj.Hash}, nil
 		}
 
 		// Possibly skip making PR if it is a no-op
 		basePRRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", Global.BasePR))
 		basePRRef, err := outputRepo.Reference(basePRRefName, true)
-		orFatal(err, "fetching pr base ref")
+		orPanic(err, "fetching pr base ref")
 		basePRBeforeHash := basePRRef.Hash()
 		if basePRBeforeHash == obj.Hash {
 			log.Println("Skipping pr, already up to date")
-			return
+			return Result{Commit: obj.Hash}, nil
 		}
 
 		prTemplate := github.NewPullRequest{
@@ -236,21 +247,22 @@ func Main() {
 			Title: refStr(firstStr(Global.PrTitle, Global.CommitMsg)),
 		}
 		pr, _, err := client.PullRequests.Create(ctx, orgName, repoName, &prTemplate)
-		orFatal(err, "creating pr")
+		orPanic(err, "creating pr")
 		defer func() { log.Printf("Browse %s", pr.GetHTMLURL()) }()
 	}
 	log.Println()
+	return Result{Commit: obj.Hash}, nil
 }
 
-func orFatal(err error, ctx string) {
+func orPanic(err error, ctx string) {
 	if err != nil {
-		log.Fatal(errors.Wrap(err, ctx))
+		log.Panic(errors.Wrap(err, ctx))
 	}
 }
 
 func maskURL(u string) string {
 	parsed, err := url.Parse(u)
-	orFatal(err, "url parsing")
+	orPanic(err, "url parsing")
 	if parsed.User == nil {
 		return u
 	}
