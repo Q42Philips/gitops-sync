@@ -52,6 +52,23 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 	}
 
 	for {
+		// (Re-)fetch all tags
+		log.Println("Fetching tags refs")
+		err = repo.Fetch(&git.FetchOptions{
+			Auth:     gitAuth,
+			RefSpecs: watchedRefspec,
+			Depth:    c.Depth,
+			Force:    true,
+		})
+		if err != nil && err != git.NoErrAlreadyUpToDate {
+			// If the tag is removed from the remote, we should remove it too
+			var errNoMatching = git.NoMatchingRefSpecError{}
+			if isRemoteMissing := errors.As(err, errNoMatching); isRemoteMissing {
+				return errors.Wrap(err, "failed to wait because one of the tags disappeared")
+			}
+			return errors.Wrap(err, "fetching tag refs")
+		}
+
 		var needsSync = make(map[string]bool)
 		for name, t := range watchedTags {
 			// check if the tag points to the commit or if it is an ancestor of the commit (for when the tag is updated after our commit)
@@ -72,27 +89,6 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 			break
 		}
 
-		// (Re-)fetch all tags
-		log.Println("Fetching tags refs")
-		err = repo.Fetch(&git.FetchOptions{
-			Auth:     gitAuth,
-			RefSpecs: watchedRefspec,
-			Depth:    c.Depth,
-			Force:    true,
-		})
-		if err != nil {
-			if err == git.NoErrAlreadyUpToDate {
-				goto next
-			}
-			// If the tag is removed from the remote, we should remove it too
-			var errNoMatching = git.NoMatchingRefSpecError{}
-			if isRemoteMissing := errors.As(err, errNoMatching); isRemoteMissing {
-				return errors.Wrap(err, "failed to wait because one of the tags disappeared")
-			}
-			return errors.Wrap(err, "fetching tag refs")
-		}
-
-	next:
 		// Loop after sleep
 		time.Sleep(2 * time.Second)
 	}
