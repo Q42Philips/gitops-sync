@@ -56,10 +56,16 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 		for name, t := range watchedTags {
 			// check if the tag points to the commit or if it is an ancestor of the commit (for when the tag is updated after our commit)
 			match, e := hasAncestor(repo, t.Target, commit)
-			if !match {
+			if e != nil || !match {
 				needsSync[name] = true
+				if e != nil {
+					log.Printf("%s (last sync %s ago) failed to verify: %s", name, time.Since(t.Tagger.When), e)
+				} else {
+					log.Printf("%s (last sync %s ago) is waiting for sync", name, time.Since(t.Tagger.When))
+				}
+			} else {
+				log.Println(name, "is up-to-date")
 			}
-			log.Println(name, match, e)
 		}
 		if len(needsSync) == 0 {
 			log.Printf("All tags include commit %q", commit)
@@ -76,7 +82,7 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 		})
 		if err != nil {
 			if err == git.NoErrAlreadyUpToDate {
-				continue
+				goto next
 			}
 			// If the tag is removed from the remote, we should remove it too
 			var errNoMatching = git.NoMatchingRefSpecError{}
@@ -86,6 +92,7 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 			return errors.Wrap(err, "fetching tag refs")
 		}
 
+	next:
 		// Loop after sleep
 		time.Sleep(2 * time.Second)
 	}
