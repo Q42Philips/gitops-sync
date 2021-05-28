@@ -78,7 +78,7 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 				if e != nil {
 					log.Printf("%s (last sync %s ago) failed to verify: %s", name, time.Since(t.Tagger.When), e)
 				} else {
-					log.Printf("%s (last sync %s ago) is waiting for sync", name, time.Since(t.Tagger.When))
+					log.Printf("%s (last sync %s ago) is not yet in sync", name, time.Since(t.Tagger.When))
 				}
 			} else {
 				log.Println(name, "is up-to-date")
