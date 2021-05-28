@@ -1,6 +1,7 @@
-package sync
+package config
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,20 +10,20 @@ import (
 	"github.com/google/go-github/v33/github"
 )
 
-func getClientAuth() (hubClient *github.Client, gitAuth githttp.AuthMethod) {
-	if *authUsername != "" {
-		hubAuth := &github.BasicAuthTransport{Username: *authUsername, Password: *authPassword, OTP: *authOtp}
+func (c *Config) GetClientAuth() (hubClient *github.Client, gitAuth githttp.AuthMethod, err error) {
+	if Global.AuthUsername != "" {
+		hubAuth := &github.BasicAuthTransport{Username: c.AuthUsername, Password: c.AuthPassword, OTP: c.AuthOtp}
 		hubClient = github.NewClient(hubAuth.Client())
 		gitAuth = &BasicAuthWrapper{hubAuth}
-	} else if *authToken != "" {
-		hubAuth := &github.BasicAuthTransport{Username: "x-access-token", Password: *authToken}
+	} else if c.AuthToken != "" {
+		hubAuth := &github.BasicAuthTransport{Username: "x-access-token", Password: c.AuthToken}
 		hubClient = github.NewClient(hubAuth.Client())
 		gitAuth = &BasicAuthWrapper{hubAuth}
 	} else {
-		log.Fatal("No authentication provided. See help for authentication options.")
+		return nil, nil, errors.New("no authentication provided, see help for authentication options")
 	}
 	log.Println(gitAuth.String())
-	return hubClient, gitAuth
+	return hubClient, gitAuth, nil
 }
 
 var _ githttp.AuthMethod = &BasicAuthWrapper{}

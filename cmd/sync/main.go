@@ -6,9 +6,10 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
+	. "github.com/Q42Philips/gitops-sync/pkg/config"
+	"github.com/Q42Philips/gitops-sync/pkg/githubutil"
 	"github.com/Q42Philips/gitops-sync/pkg/gitlogic"
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-billy/v5/osfs"
@@ -18,47 +19,32 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/google/go-github/v33/github"
-	"github.com/jnovack/flag"
 	"github.com/koron-go/prefixw"
 	"github.com/pkg/errors"
 )
 
-// flags
-var (
-	commitMsg      = flag.String("message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
-	inputPath      = flag.String("input-path", ".", "where to read artifacts from")
-	outputRepoURL  = flag.String("output-repo", "", "where to write artifacts to")
-	outputRepoPath = flag.String("output-repo-path", ".", "where to write artifacts to")
-	outputBase     = flag.String("output-base", "develop", "reference to use as basis")
-	outputHead     = flag.String("output-head", "", "reference to write to & create a PR from into base; default = generated")
-	basePR         = flag.String("pr", "", "whether to create a PR, and if set, which branch to set as PR base")
-	baseMerge      = flag.String("merge", "", "whether to merge straight away, which branch to set as merge base")
-	prBody         = flag.String("pr-body", "Sync", "Body of PR")
-	prTitle        = flag.String("pr-title", "Sync", "Title of PR; defaults to commit message")
-	commitTime     = flag.String("commit-timestamp", "now", "Time of the commit; for example $CI_COMMIT_TIMESTAMP of the original commit")
-	dryRun         = flag.Bool("dry-run", false, "Do not push, merge, nor PR")
-	depth          = flag.Int("depth", 0, "Set the depth to do a shallow clone. Use with caution, go-git pushes can fail for shallow branches.")
-	// Either use
-	authUsername = flag.String("github-username", "", "GitHub username to use for basic auth")
-	authPassword = flag.String("github-password", "", "GitHub password to use for basic auth")
-	authOtp      = flag.String("github-otp", "", "GitHub OTP to use for basic auth")
-	// Or use
-	authToken = flag.String("github-token", "", "GitHub token, authorize using env $GITHUB_TOKEN (convention)")
-)
-
-func init() {
-	flag.Parse()
-
-	if *outputRepoURL == "" {
-		log.Fatal("No output repository set")
-	}
-}
-
 var outputRepo *git.Repository
 
-func Main() {
-	client, gitAuth := getClientAuth()
+type Result struct {
+	Commit     plumbing.Hash
+	Repository *git.Repository
+}
+
+func Main(Global Config) (result Result, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			var isErr bool
+			if err, isErr = r.(error); !isErr {
+				err = fmt.Errorf("%s", fmt.Sprint(r))
+			}
+		}
+	}()
+
 	ctx := context.Background()
+	client, gitAuth, err := Global.GetClientAuth()
+	if err != nil {
+		log.Panic(err)
+	}
 
 	// Test auth
 	u, _, err := client.Users.Get(ctx, "")
@@ -69,38 +55,23 @@ func Main() {
 		log.Println()
 	}
 
-	// Options
-	if *outputHead == "" {
-		*outputHead = fmt.Sprintf("auto/sync/%s", time.Now().Format("20060102T150405Z"))
-	}
-	headRefName := plumbing.NewBranchReferenceName(*outputHead)
-	baseRefName := plumbing.NewBranchReferenceName(*outputBase)
-	orgName, repoName, err := parseGitHubRepo(*outputRepoURL)
-	orFatal(err, "parsing url")
-
-	if *commitMsg == "" {
-		project := os.Getenv("CI_PROJECT_NAME")
-		if project == "" {
-			project, _ = os.Getwd()
-		}
-		refName := os.Getenv("CI_COMMIT_REF_NAME")
-		if refName == "" {
-			refName = "unknown"
-		}
-		*commitMsg = fmt.Sprintf("Sync %s/%s", project, refName)
-	}
+	headRefName := plumbing.NewBranchReferenceName(Global.OutputHead)
+	baseRefName := plumbing.NewBranchReferenceName(Global.OutputBase)
+	orgName, repoName, err := githubutil.ParseGitHubRepo(Global.OutputRepoURL)
+	orPanic(err, "parsing url")
 
 	// Prepare output repository
 	outputStorer := memory.NewStorage()
 	outputFs := memfs.New()
-	log.Printf("Cloning %s", maskURL(*outputRepoURL))
+	log.Printf("Cloning %s", maskURL(Global.OutputRepoURL))
 	outputRepo, err = git.Clone(outputStorer, outputFs, &git.CloneOptions{
 		Auth:     gitAuth,
 		Progress: prefixw.New(os.Stderr, "> "),
-		URL:      *outputRepoURL,
-		Depth:    *depth,
+		URL:      Global.OutputRepoURL,
+		Depth:    Global.Depth,
 	})
-	orFatal(err, "cloning")
+	result.Repository = outputRepo
+	orPanic(err, "cloning")
 	log.Println()
 
 	log.Println("Fetching all refs")
@@ -108,21 +79,21 @@ func Main() {
 		Auth:     gitAuth,
 		Progress: os.Stdout,
 		RefSpecs: []config.RefSpec{"refs/*:refs/*"},
-		Depth:    *depth,
+		Depth:    Global.Depth,
 	})
-	orFatal(err, "fetching (refs/*:refs/*)")
+	orPanic(err, "fetching (refs/*:refs/*)")
 	log.Println()
 
 	// Prepare begin state
-	inputFs := osfs.New(*inputPath)
+	inputFs := osfs.New(Global.InputPath)
 	w, err := outputRepo.Worktree()
-	orFatal(err, "worktree")
+	orPanic(err, "worktree")
 
 	var startRef *plumbing.Reference
 	startRef, err = outputRepo.Reference(baseRefName, true)
-	orFatal(err, fmt.Sprintf("base branch %q does not exist, check your inputs", *outputBase))
+	orPanic(err, fmt.Sprintf("base branch %q does not exist, check your inputs", Global.OutputBase))
 
-	log.Printf("Updating HEAD (%s)", *outputHead)
+	log.Printf("Updating HEAD (%s)", Global.OutputHead)
 	headRef, err := outputRepo.Reference(headRefName, true)
 	var beforeRefspecs []config.RefSpec = nil
 	if err == nil {
@@ -135,7 +106,7 @@ func Main() {
 			log.Printf("Rebasing %s onto %s (commit %s), discarding commit %s", headRef.Name().Short(), startRef.Name().Short(), startRef.Hash(), headRef.Hash())
 		}
 		err = w.Checkout(&git.CheckoutOptions{Hash: startRef.Hash(), Force: true})
-		orFatal(err, fmt.Sprintf("worktree checkout to %s", startRef.Hash()))
+		orPanic(err, fmt.Sprintf("worktree checkout to %s", startRef.Hash()))
 	} else if err == plumbing.ErrReferenceNotFound {
 		// Create new head branch
 		log.Printf("Creating head branch %s from base %s", headRefName, baseRefName)
@@ -144,37 +115,31 @@ func Main() {
 			Hash:   startRef.Hash(),
 			Create: true,
 		})
-		orFatal(err, fmt.Sprintf("worktree checkout to %s := %s", headRefName, startRef.Hash()))
+		orPanic(err, fmt.Sprintf("worktree checkout to %s := %s", headRefName, startRef.Hash()))
 	} else {
-		orFatal(err, "worktree checkout failed")
+		orPanic(err, "worktree checkout failed")
 	}
 	log.Println()
 
 	// Commit options
-	var t time.Time = time.Now()
-	if *commitTime != "now" {
-		// Allow a configured commit time to allow aligning GitOps commits to the original repo commit
-		t, err = time.Parse(time.RFC3339, *commitTime)
-		orFatal(err, "parsing commit time with RFC3339/ISO8601 format")
-	}
 	signature := &object.Signature{
 		Name:  u.GetLogin(),
 		Email: firstStr(u.GetEmail(), fmt.Sprintf("%s@users.noreply.github.com", u.GetLogin())),
-		When:  t,
+		When:  time.Time(Global.CommitTime),
 	}
 	commitOpt := &git.CommitOptions{Author: signature, Committer: signature}
 
 	// Do sync & commit
-	obj := gitlogic.Sync(outputRepo, *outputRepoPath, inputFs, commitOpt, *commitMsg)
+	obj := gitlogic.Sync(outputRepo, Global.OutputRepoPath, inputFs, commitOpt, Global.CommitMsg)
 	log.Println()
 
 	// Update reference
 	ref := plumbing.NewHashReference(headRefName, obj.Hash)
 	log.Printf("Setting ref %q to %s", ref.Name(), obj.Hash)
 	err = outputStorer.SetReference(ref)
-	orFatal(err, "creating ref")
+	orPanic(err, "creating ref")
 
-	if *dryRun {
+	if Global.DryRun {
 		log.Println("Stopping now because of dry-run")
 		return
 	}
@@ -193,43 +158,43 @@ func Main() {
 		log.Println("Nothing to push, already up to date")
 		err = nil
 	}
-	orFatal(err, "pushing")
+	orPanic(err, "pushing")
 	c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
-	orFatal(err, "getting sync commit")
+	orPanic(err, "getting sync commit")
 	defer func() { log.Printf("Browse %s %q", c.GetHTMLURL(), c.Commit.GetMessage()) }()
 	log.Println()
 
 	// Merge if requested
-	if *baseMerge != "" {
-		log.Printf("Updating BASE (%s)", *baseMerge)
+	if Global.BaseMerge != "" {
+		log.Printf("Updating BASE (%s)", Global.BaseMerge)
 		// Possibly skip making merge if it is a no-op
-		baseMergeRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *baseMerge))
+		baseMergeRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", Global.BaseMerge))
 		baseMergeRef, err := outputRepo.Reference(baseMergeRefName, true)
-		orFatal(err, "fetching merge base ref")
+		orPanic(err, "fetching merge base ref")
 		baseMergeBeforeHash := baseMergeRef.Hash()
 		if baseMergeBeforeHash == obj.Hash {
 			log.Println("Skipping merge, already up to date")
-			return
+			return Result{Commit: obj.Hash}, nil
 		}
 
 		// We merge by taking "--theirs" (to prevent issues where re-syncs don't overwrite because the commit already is in upstream)
-		log.Printf("Merging %s into %s...", headRefName.Short(), *baseMerge)
+		log.Printf("Merging %s into %s...", headRefName.Short(), Global.BaseMerge)
 
 		// First checkout "ours" (the merge base)
 		w.Checkout(&git.CheckoutOptions{Hash: baseMergeRef.Hash(), Force: true})
-		orFatal(err, fmt.Sprintf("worktree checkout to merge base %s (%s)", baseMergeRef.Name().Short(), baseMergeRef.Hash().String()))
+		orPanic(err, fmt.Sprintf("worktree checkout to merge base %s (%s)", baseMergeRef.Name().Short(), baseMergeRef.Hash().String()))
 
 		// Draft merge commit opts
 		commitOpt.Parents = []plumbing.Hash{baseMergeRef.Hash(), obj.Hash}
 		commitOpt.Author.When = time.Now() // use current time
 		commitOpt.Committer.When = commitOpt.Author.When
 		// Then sync again by overwriting with our inputFs
-		mergeCommit := gitlogic.Sync(outputRepo, *outputRepoPath, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
+		mergeCommit := gitlogic.Sync(outputRepo, Global.OutputRepoPath, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
 
 		// Update ref
 		ref := plumbing.NewHashReference(baseMergeRefName, mergeCommit.Hash)
 		err = outputStorer.SetReference(ref)
-		orFatal(err, "updating ref (merged)")
+		orPanic(err, "updating ref (merged)")
 
 		// Push
 		refspec := config.RefSpec(fmt.Sprintf("%s:%s", baseMergeRefName, baseMergeRefName))
@@ -245,61 +210,62 @@ func Main() {
 		if err == git.NoErrAlreadyUpToDate {
 			err = nil
 		}
-		orFatal(err, "pushing")
+		orPanic(err, "pushing")
 		c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, mergeCommit.Hash.String())
-		orFatal(err, "getting custom merge commit")
+		orPanic(err, "getting custom merge commit")
 		defer func() { log.Printf("Browse %s %q", c.GetHTMLURL(), c.Commit.GetMessage()) }()
 	}
 
 	// Pull Request if requested
-	if *basePR != "" {
+	if Global.BasePR != "" {
 		prs, _, err := client.PullRequests.List(ctx, orgName, repoName, &github.PullRequestListOptions{
 			Head:  fmt.Sprintf("%s:%s", orgName, headRefName.Short()),
-			Base:  *basePR,
+			Base:  Global.BasePR,
 			State: "open",
 		})
-		orFatal(err, "getting existing prs")
+		orPanic(err, "getting existing prs")
 		if len(prs) > 0 {
 			log.Println("Existing PRs:")
 			for _, pr := range prs {
 				log.Println("-", pr.GetHTMLURL())
 			}
-			return
+			return Result{Commit: obj.Hash}, nil
 		}
 
 		// Possibly skip making PR if it is a no-op
-		basePRRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", *basePR))
+		basePRRefName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", Global.BasePR))
 		basePRRef, err := outputRepo.Reference(basePRRefName, true)
-		orFatal(err, "fetching pr base ref")
+		orPanic(err, "fetching pr base ref")
 		basePRBeforeHash := basePRRef.Hash()
 		if basePRBeforeHash == obj.Hash {
 			log.Println("Skipping pr, already up to date")
-			return
+			return Result{Commit: obj.Hash}, nil
 		}
 
 		prTemplate := github.NewPullRequest{
 			Head:  refStr(headRefName.Short()),
-			Base:  basePR,
+			Base:  &Global.BasePR,
 			Draft: refBool(true),
-			Body:  prBody,
-			Title: refStr(firstStr(*prTitle, *commitMsg)),
+			Body:  &Global.PrBody,
+			Title: refStr(firstStr(Global.PrTitle, Global.CommitMsg)),
 		}
 		pr, _, err := client.PullRequests.Create(ctx, orgName, repoName, &prTemplate)
-		orFatal(err, "creating pr")
+		orPanic(err, "creating pr")
 		defer func() { log.Printf("Browse %s", pr.GetHTMLURL()) }()
 	}
 	log.Println()
+	return Result{Commit: obj.Hash}, nil
 }
 
-func orFatal(err error, ctx string) {
+func orPanic(err error, ctx string) {
 	if err != nil {
-		log.Fatal(errors.Wrap(err, ctx))
+		log.Panic(errors.Wrap(err, ctx))
 	}
 }
 
 func maskURL(u string) string {
 	parsed, err := url.Parse(u)
-	orFatal(err, "url parsing")
+	orPanic(err, "url parsing")
 	if parsed.User == nil {
 		return u
 	}
@@ -309,18 +275,6 @@ func maskURL(u string) string {
 	}
 	parsed.User = info
 	return parsed.String()
-}
-
-func parseGitHubRepo(u string) (org, repo string, err error) {
-	p, err := url.Parse(u)
-	if err != nil {
-		return "", "", err
-	}
-	pathSegments := strings.Split(strings.Trim(strings.TrimRight(p.Path, ".git"), "/"), "/")
-	if len(pathSegments) < 2 {
-		return "", "", errors.New("invalid github url")
-	}
-	return pathSegments[0], pathSegments[1], nil
 }
 
 func refStr(inp string) *string {
