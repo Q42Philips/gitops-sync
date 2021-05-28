@@ -174,7 +174,7 @@ func Main(Global Config) (result Result, err error) {
 		baseMergeBeforeHash := baseMergeRef.Hash()
 		if baseMergeBeforeHash == obj.Hash {
 			log.Println("Skipping merge, already up to date")
-			return Result{Commit: obj.Hash}, nil
+			return Result{Commit: obj.Hash, Repository: outputRepo}, nil
 		}
 
 		// We merge by taking "--theirs" (to prevent issues where re-syncs don't overwrite because the commit already is in upstream)
@@ -229,7 +229,7 @@ func Main(Global Config) (result Result, err error) {
 			for _, pr := range prs {
 				log.Println("-", pr.GetHTMLURL())
 			}
-			return Result{Commit: obj.Hash}, nil
+			return Result{Commit: obj.Hash, Repository: outputRepo}, nil
 		}
 
 		// Possibly skip making PR if it is a no-op
@@ -239,7 +239,7 @@ func Main(Global Config) (result Result, err error) {
 		basePRBeforeHash := basePRRef.Hash()
 		if basePRBeforeHash == obj.Hash {
 			log.Println("Skipping pr, already up to date")
-			return Result{Commit: obj.Hash}, nil
+			return Result{Commit: obj.Hash, Repository: outputRepo}, nil
 		}
 
 		prTemplate := github.NewPullRequest{
@@ -254,7 +254,7 @@ func Main(Global Config) (result Result, err error) {
 		defer func() { log.Printf("Browse %s", pr.GetHTMLURL()) }()
 	}
 	log.Println()
-	return Result{Commit: obj.Hash}, nil
+	return Result{Commit: obj.Hash, Repository: outputRepo}, nil
 }
 
 func orPanic(err error, ctx string) {
