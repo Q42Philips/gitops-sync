@@ -26,7 +26,7 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	} else {
-		os.Stdout.Write([]byte(result.Commit.String()))
+		os.Stdout.Write([]byte(result.Commit.String() + "\n"))
 	}
 
 	if Global.WaitForTags.Glob != nil {
