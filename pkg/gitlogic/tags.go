@@ -71,6 +71,19 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 
 		var needsSync = make(map[string]bool)
 		for name, t := range watchedTags {
+			// get latest tagObject
+			ref, err := repo.Tag(name)
+			if err != nil {
+				log.Printf("%s (last sync %s ago) failed to verify: %s", name, time.Since(t.Tagger.When), err)
+				continue
+			}
+			t, err = repo.TagObject(ref.Hash())
+			if err != nil {
+				log.Printf("%s (last sync %s ago) failed to verify: %s", name, time.Since(t.Tagger.When), err)
+				continue
+			}
+			watchedTags[name] = t
+
 			// check if the tag points to the commit or if it is an ancestor of the commit (for when the tag is updated after our commit)
 			match, e := hasAncestor(repo, t.Target, commit)
 			if e != nil || !match {
