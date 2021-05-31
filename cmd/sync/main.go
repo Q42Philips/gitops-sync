@@ -131,6 +131,7 @@ func Main(Global Config) (result Result, err error) {
 
 	// Do sync & commit
 	obj := gitlogic.Sync(outputRepo, Global.OutputRepoPath, inputFs, commitOpt, Global.CommitMsg)
+	result = Result{Commit: obj.Hash, Repository: outputRepo}
 	log.Println()
 
 	// Update reference
@@ -174,7 +175,7 @@ func Main(Global Config) (result Result, err error) {
 		baseMergeBeforeHash := baseMergeRef.Hash()
 		if baseMergeBeforeHash == obj.Hash {
 			log.Println("Skipping merge, already up to date")
-			return Result{Commit: obj.Hash, Repository: outputRepo}, nil
+			return result, nil
 		}
 
 		// We merge by taking "--theirs" (to prevent issues where re-syncs don't overwrite because the commit already is in upstream)
@@ -190,6 +191,7 @@ func Main(Global Config) (result Result, err error) {
 		commitOpt.Committer.When = commitOpt.Author.When
 		// Then sync again by overwriting with our inputFs
 		mergeCommit := gitlogic.Sync(outputRepo, Global.OutputRepoPath, inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
+		result.Commit = mergeCommit.Hash // update object to wait for
 
 		// Update ref
 		ref := plumbing.NewHashReference(baseMergeRefName, mergeCommit.Hash)
@@ -229,7 +231,7 @@ func Main(Global Config) (result Result, err error) {
 			for _, pr := range prs {
 				log.Println("-", pr.GetHTMLURL())
 			}
-			return Result{Commit: obj.Hash, Repository: outputRepo}, nil
+			return result, nil
 		}
 
 		// Possibly skip making PR if it is a no-op
@@ -239,7 +241,7 @@ func Main(Global Config) (result Result, err error) {
 		basePRBeforeHash := basePRRef.Hash()
 		if basePRBeforeHash == obj.Hash {
 			log.Println("Skipping pr, already up to date")
-			return Result{Commit: obj.Hash, Repository: outputRepo}, nil
+			return result, nil
 		}
 
 		prTemplate := github.NewPullRequest{
@@ -254,7 +256,7 @@ func Main(Global Config) (result Result, err error) {
 		defer func() { log.Printf("Browse %s", pr.GetHTMLURL()) }()
 	}
 	log.Println()
-	return Result{Commit: obj.Hash, Repository: outputRepo}, nil
+	return result, nil
 }
 
 func orPanic(err error, ctx string) {
