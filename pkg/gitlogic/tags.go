@@ -62,9 +62,11 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 		})
 		if err != nil && err != git.NoErrAlreadyUpToDate {
 			// If the tag is removed from the remote, we should remove it too
-			var errNoMatching = &git.NoMatchingRefSpecError{}
+			var errNoMatching = git.NoMatchingRefSpecError{}
 			if isRemoteMissing := errors.As(err, &errNoMatching); isRemoteMissing {
-				return errors.Wrap(err, "failed to wait because one of the tags disappeared")
+				log.Printf("failed to fetch tag: %s", err.Error())
+				time.Sleep(2 * time.Second)
+				continue
 			}
 			return errors.Wrap(err, "fetching tag refs")
 		}

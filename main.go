@@ -33,6 +33,7 @@ func main() {
 		log.Printf("Waiting for tags (%q) to include synced commit", Global.WaitForTags.String())
 		err = gitlogic.WaitForTags(context.Background(), Global, result.Commit, result.Repository)
 		if err != nil {
+			log.Printf("Error waiting for tags: %s", err)
 			os.Exit(1)
 		} else {
 			os.Exit(0)
