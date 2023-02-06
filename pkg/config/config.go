@@ -9,13 +9,6 @@ import (
 	"github.com/jnovack/flag"
 )
 
-var Global Config
-
-func init() {
-	Global.Init()
-	Global.ParseAndValidate()
-}
-
 func (c *Config) Init() {
 	// flags
 	flag.StringVar(&c.CommitMsg, "message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
@@ -72,13 +65,13 @@ type Config struct {
 
 func (c *Config) ParseAndValidate() {
 	flag.Parse()
-	if Global.OutputRepoURL == "" {
+	if c.OutputRepoURL == "" {
 		log.Fatal("No output repository set")
 	}
-	if Global.OutputHead == "" {
-		Global.OutputHead = fmt.Sprintf("auto/sync/%s", time.Now().Format("20060102T150405Z"))
+	if c.OutputHead == "" {
+		c.OutputHead = fmt.Sprintf("auto/sync/%s", time.Now().Format("20060102T150405Z"))
 	}
-	if Global.CommitMsg == "" {
+	if c.CommitMsg == "" {
 		project := os.Getenv("CI_PROJECT_NAME")
 		if project == "" {
 			project, _ = os.Getwd()
@@ -87,6 +80,6 @@ func (c *Config) ParseAndValidate() {
 		if refName == "" {
 			refName = "unknown"
 		}
-		Global.CommitMsg = fmt.Sprintf("Sync %s/%s", project, refName)
+		c.CommitMsg = fmt.Sprintf("Sync %s/%s", project, refName)
 	}
 }
