@@ -159,6 +159,20 @@ func Main(Global Config) (result Result, err error) {
 		log.Println("Nothing to push, already up to date")
 		err = nil
 	}
+	if err != nil {
+		// Recover untyped error "remote ref refs/heads/... required to be ... but is ..." with refetch
+		_ = outputRepo.Fetch(&git.FetchOptions{
+			Auth:     gitAuth,
+			Progress: os.Stdout,
+			RefSpecs: []config.RefSpec{"refs/*:refs/*"},
+			Depth:    Global.Depth,
+		})
+		recheckedHeadRef, _ := outputRepo.Reference(headRefName, true)
+		if recheckedHeadRef != nil && recheckedHeadRef.Hash() == ref.Hash() {
+			log.Println("Updated in parallel sync, already up to date")
+			err = nil
+		}
+	}
 	orPanic(err, "pushing")
 	c, _, err := client.Repositories.GetCommit(ctx, orgName, repoName, obj.Hash.String())
 	orPanic(err, "getting sync commit")
