@@ -11,7 +11,7 @@ import (
 )
 
 func (c *Config) GetClientAuth() (hubClient *github.Client, gitAuth githttp.AuthMethod, err error) {
-	if Global.AuthUsername != "" {
+	if c.AuthUsername != "" {
 		hubAuth := &github.BasicAuthTransport{Username: c.AuthUsername, Password: c.AuthPassword, OTP: c.AuthOtp}
 		hubClient = github.NewClient(hubAuth.Client())
 		gitAuth = &BasicAuthWrapper{hubAuth}

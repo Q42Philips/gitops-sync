@@ -20,8 +20,11 @@ func ChrootMkdir(fs billy.Filesystem, path string) (out billy.Filesystem, err er
 func RmRecursively(fs billy.Filesystem, path string) error {
 	st, err := fs.Stat(path)
 	// Already non-existing
-	if err == os.ErrNotExist {
+	if os.IsNotExist(err) {
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 	// Not a dir
 	if !st.IsDir() {
