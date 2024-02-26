@@ -1,0 +1,23 @@
+name: PR Checks
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  checks:
+    name: Build and Test checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Golang
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ./go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Run Tests
+        run: go test ./...
