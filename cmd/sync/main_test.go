@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,37 +19,71 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
 
 func TestMain(t *testing.T) {
 	log.SetFlags(0)
-	state := State{}
-	state.fromTestSetup()
 
+	t.Run("Test that a single microservice is synced", func(t *testing.T) {
+		state :=  NewTestSetup()
+		performTest(t, state)
+	})
+
+	t.Run("Test that multiple output paths are synced", func(t *testing.T) {
+		state := NewTestSetup()
+		state.Global.OutputRepoPathList = "bases/microservice-a,apps/microservice-a"
+
+		performTest(t, state)
+	})
+}
+
+func performTest(t *testing.T, state State) {
 	_, externalURL := prepareExternal()
 
 	grp := errgroup.Group{}
-	var result Result
-	var err error
+	var (
+		err error
+		result1 Result
+		result2 Result
+		result3 Result
+	)
 	grp.Go(func() error {
 		s := state.withFreshInput().withFreshOutput(externalURL)
-		result, err = s.syncBranch()
+		result1, err = s.syncBranch()
 		return err
 	})
 	grp.Go(func() error {
 		s := state.withFreshInput().withFreshOutput(externalURL)
-		result, err = s.syncBranch()
+		result2, err = s.syncBranch()
 		return err
 	})
 	grp.Go(func() error {
 		s := state.withFreshInput().withFreshOutput(externalURL)
-		result, err = s.syncBranch()
+		result3, err = s.syncBranch()
 		return err
 	})
 	err = grp.Wait()
 	orPanic(errors.WithStack(err), "sync")
-	assert.Equal(t, result.Commit.Message, "sync")
+
+	folders := strings.Split(state.Global.OutputRepoPathList, ",")
+	checkCommit(t, result1.Commit, folders)
+	checkCommit(t, result2.Commit, folders)
+	checkCommit(t, result3.Commit, folders)
+}
+
+func checkCommit(t *testing.T, commit *object.Commit, modifiedFolders []string) {
+	require.Equal(t, commit.Message, "sync")
+	
+	files, err := commit.Stats()
+	orPanic(err, "files")
+
+	for _, f := range files {
+		if ! slices.ContainsFunc(modifiedFolders, func(s string) bool { return strings.Contains(f.Name, s) }) {
+			assert.Fail(t, "unexpected modified file", f.Name)
+		}
+	}
 }
 
 func (state State) withFreshInput() State {
@@ -91,19 +127,18 @@ func (state State) withFreshOutput(url string) State {
 	return state
 }
 
-func (state *State) fromTestSetup() {
-
-	state.Global = config.Config{
-		OutputBase:     "production",
-		OutputHead:     "feature/something",
-		CommitMsg:      "sync",
-		PrBody:         "body",
-		PrTitle:        "title",
-		OutputRepoPath: "bases/microservice-a",
-		CommitTime:     config.TimeValue(time.Date(2006, 1, 2, 3, 4, 5, 0, time.FixedZone("UTC", 0))),
+func NewTestSetup() State {
+	return State{
+		orgName:  "Q42Philips",
+		repoName: "gitops",
+		Global: config.Config{
+			OutputBase:         "production",
+			OutputHead:         "feature/something",
+			CommitMsg:          "sync",
+			PrBody:             "body",
+			PrTitle:            "title",
+			OutputRepoPathList: "bases/microservice-a",
+			CommitTime:         config.TimeValue(time.Date(2006, 1, 2, 3, 4, 5, 0, time.FixedZone("UTC", 0))),
+		},
 	}
-	state.orgName = "Q42Philips"
-	state.repoName = "gitops"
-
-	return
 }
