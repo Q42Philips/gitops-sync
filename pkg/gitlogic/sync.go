@@ -10,21 +10,30 @@ import (
 	"github.com/pkg/errors"
 )
 
-func Sync(gr *git.Repository, outputPaths []string, inputFs billy.Filesystem, commitOpt *git.CommitOptions, msg string) *object.Commit {
+// Sync syncs the input filesystem to the output paths in the git repository.
+func Sync(gr *git.Repository, outputPaths []string, inputFs billy.Filesystem, commitOpt *git.CommitOptions, msg string) (*object.Commit, error) {
 	// Do sync
 	w, err := gr.Worktree()
-	orFatal(err, "getting worktree")
+	if err != nil {
+		return nil, errors.Wrap(err, "getting worktree")
+	}
 
 	baseFs := w.Filesystem
 	outputs := make([]billy.Filesystem, 0)
 
+	log.Println("Cleaing up files")
 	for _, p := range outputPaths {
-		err = RmRecursively(baseFs, p) // remove existing files
-		orFatal(err, "removing old artifacts from fs")
+		// remove existing files
+		err = RmRecursively(baseFs, p)
+		if err != nil {
+			return nil, errors.Wrapf(err, "removing old artifacts from fs: %s", p)
+		}
 
 		if p != "." && p != "" {
 			o, err := ChrootMkdir(baseFs, p)
-			orFatal(err, "failed to go to subdirectory")
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to go or create to subdirectory: %s", p)
+			}
 			outputs = append(outputs, o)
 		}
 	}
@@ -32,41 +41,58 @@ func Sync(gr *git.Repository, outputPaths []string, inputFs billy.Filesystem, co
 	log.Println("Copying files")
 	for _, op := range outputs {
 		err = Copy(inputFs, op)
-		orFatal(err, "copy files")
+		if err != nil {
+			return nil, errors.Wrap(err, "copying files")
+		}
 	}
 
+	log.Println("Adding files to git")
 	err = addAllFiles(w)
-	orFatal(err, "git add -A")
+	if err != nil {
+		return nil, errors.Wrap(err, "adding files to git commit")
+	}
 
 	// Print status
 	status, err := w.Status()
 	if len(status) == 0 {
 		log.Println("No changes. Skipping commit.")
 		head, err := gr.Head()
-		orFatal(err, "getting head")
+		if err != nil {
+			return nil, errors.Wrap(err, "getting git head")
+		}
 		obj, err := gr.CommitObject(head.Hash())
-		orFatal(err, "getting commit")
-		return obj
+		if err != nil {
+			return nil, errors.Wrap(err, "getting commit")
+		}
+		return obj, nil
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "status")
 	}
 
 	log.Println("Sync changes:")
-	orFatal(err, "status")
-	prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
+	_, err = prefixw.New(log.Writer(), "> ").Write([]byte(status.String()))
+	if err != nil {
+		return nil, errors.Wrap(err, "writing status")
+	}
 
 	// Commit
-	w.Status()
+	_, err = w.Status()
+	if err != nil {
+		return nil, errors.Wrap(err, "status")
+	}
 	hash, err := w.Commit(msg, commitOpt)
-	orFatal(err, "committing")
+	if err != nil {
+		return nil, errors.Wrap(err, "committing")
+	}
+
 	log.Println("Created commit", hash.String())
 	obj, err := gr.CommitObject(hash)
-	orFatal(err, "getting commit")
-	return obj
-}
-
-func orFatal(err error, ctx string) {
 	if err != nil {
-		log.Fatal(errors.Wrap(err, ctx))
+		return nil, errors.Wrap(err, "getting commit")
 	}
+
+	return obj, nil
 }
 
 // addAllFiles is "git add -A".

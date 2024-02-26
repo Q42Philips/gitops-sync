@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jnovack/flag"
+	"flag"
 )
 
 func (c *Config) Init() {
