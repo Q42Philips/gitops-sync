@@ -47,7 +47,7 @@ func TestSync(t *testing.T) {
 	writeFile(inputFs, "template.yaml", "updated: true")
 
 	// Test
-	commit := Sync(repo, "bases/app2", inputFs, &git.CommitOptions{}, "sync")
+	commit := Sync(repo, []string{"bases/app2"}, inputFs, &git.CommitOptions{}, "sync")
 	assert.NotNil(t, commit)
 	changes, err := diff(repo, hash.String(), commit.Hash.String())
 	assert.NoError(t, err)

@@ -7,7 +7,6 @@ import (
 
 	"github.com/Q42Philips/gitops-sync/cmd/sync"
 	"github.com/Q42Philips/gitops-sync/pkg/config"
-	. "github.com/Q42Philips/gitops-sync/pkg/config"
 	"github.com/Q42Philips/gitops-sync/pkg/gitlogic"
 )
 

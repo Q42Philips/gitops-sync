@@ -184,7 +184,7 @@ func (state State) syncBranch() (result Result, err error) {
 	commitOpt := &git.CommitOptions{Author: signature, Committer: signature}
 
 	// Do sync & commit
-	obj := gitlogic.Sync(state.outputRepo, Global.OutputRepoPath, state.inputFs, commitOpt, Global.CommitMsg)
+	obj := gitlogic.Sync(state.outputRepo, Global.OutputRepoPath(), state.inputFs, commitOpt, Global.CommitMsg)
 	result = Result{Commit: obj, Repository: state.outputRepo}
 	log.Println()
 
@@ -253,7 +253,7 @@ func (state State) merge(obj *object.Commit) (result Result, err error) {
 		log.Printf("Merging %s into %s...", headRefName.Short(), Global.BaseMerge)
 
 		// First checkout "ours" (the merge base)
-		state.worktree.Checkout(&git.CheckoutOptions{Hash: baseMergeRef.Hash(), Force: true})
+		err = state.worktree.Checkout(&git.CheckoutOptions{Hash: baseMergeRef.Hash(), Force: true})
 		orPanic(errors.WithStack(err), fmt.Sprintf("worktree checkout to merge base %s (%s)", baseMergeRef.Name().Short(), baseMergeRef.Hash().String()))
 
 		// Draft merge commit opts
@@ -268,7 +268,7 @@ func (state State) merge(obj *object.Commit) (result Result, err error) {
 			Committer: signature,
 		}
 		// Then sync again by overwriting with our inputFs
-		mergeCommit := gitlogic.Sync(state.outputRepo, Global.OutputRepoPath, state.inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
+		mergeCommit := gitlogic.Sync(state.outputRepo, Global.OutputRepoPath(), state.inputFs, commitOpt, fmt.Sprintf("Merge %s into %s", headRefName.Short(), baseMergeRefName.Short()))
 		result.Commit = mergeCommit // update object to wait for
 
 		// Push

@@ -10,20 +10,31 @@ import (
 	"github.com/pkg/errors"
 )
 
-func Sync(gr *git.Repository, outputPath string, inputFs billy.Filesystem, commitOpt *git.CommitOptions, msg string) *object.Commit {
+func Sync(gr *git.Repository, outputPaths []string, inputFs billy.Filesystem, commitOpt *git.CommitOptions, msg string) *object.Commit {
 	// Do sync
 	w, err := gr.Worktree()
 	orFatal(err, "getting worktree")
 
-	outputFs := w.Filesystem
-	err = RmRecursively(outputFs, outputPath) // remove existing files
-	orFatal(err, "removing old artifacts from fs")
-	if outputPath != "." && outputPath != "" {
-		outputFs, err = ChrootMkdir(outputFs, outputPath)
-		orFatal(err, "failed to go to subdirectory")
+	baseFs := w.Filesystem
+	outputs := make([]billy.Filesystem, 0)
+
+	for _, p := range outputPaths {
+		err = RmRecursively(baseFs, p) // remove existing files
+		orFatal(err, "removing old artifacts from fs")
+
+		if p != "." && p != "" {
+			o, err := ChrootMkdir(baseFs, p)
+			orFatal(err, "failed to go to subdirectory")
+			outputs = append(outputs, o)
+		}
 	}
-	err = Copy(inputFs, outputFs)
-	orFatal(err, "copy files")
+
+	log.Println("Copying files")
+	for _, op := range outputs {
+		err = Copy(inputFs, op)
+		orFatal(err, "copy files")
+	}
+
 	err = addAllFiles(w)
 	orFatal(err, "git add -A")
 

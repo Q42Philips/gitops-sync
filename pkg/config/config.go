@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jnovack/flag"
@@ -14,7 +15,7 @@ func (c *Config) Init() {
 	flag.StringVar(&c.CommitMsg, "message", "", "commit message, defaults to 'Sync ${CI_PROJECT_NAME:-$PWD}/$CI_COMMIT_REF_NAME to $OUTPUT_REPO_BRANCH")
 	flag.StringVar(&c.InputPath, "input-path", ".", "where to read artifacts from")
 	flag.StringVar(&c.OutputRepoURL, "output-repo", "", "where to write artifacts to")
-	flag.StringVar(&c.OutputRepoPath, "output-repo-path", ".", "where to write artifacts to")
+	flag.StringVar(&c.OutputRepoPathList, "output-repo-path", ".", "where to write artifacts to, comma separated list of paths in the repo")
 	flag.StringVar(&c.OutputBase, "output-base", "develop", "reference to use as basis")
 	flag.StringVar(&c.OutputHead, "output-head", "", "reference to write to & create a PR from into base; default = generated")
 	flag.StringVar(&c.BasePR, "pr", "", "whether to create a PR, and if set, which branch to set as PR base")
@@ -39,16 +40,16 @@ func (c *Config) Init() {
 }
 
 type Config struct {
-	CommitMsg      string
-	InputPath      string
-	OutputRepoURL  string
-	OutputRepoPath string
-	OutputBase     string
-	OutputHead     string
-	BasePR         string
-	BaseMerge      string
-	PrBody         string
-	PrTitle        string
+	CommitMsg          string
+	InputPath          string
+	OutputRepoURL      string
+	OutputRepoPathList string
+	OutputBase         string
+	OutputHead         string
+	BasePR             string
+	BaseMerge          string
+	PrBody             string
+	PrTitle            string
 	// Allow a configured commit time to allow aligning GitOps commits to the original repo commit
 	CommitTime TimeValue
 
@@ -82,4 +83,8 @@ func (c *Config) ParseAndValidate() {
 		}
 		c.CommitMsg = fmt.Sprintf("Sync %s/%s", project, refName)
 	}
+}
+
+func (c *Config) OutputRepoPath() []string {
+	return strings.Split(c.OutputRepoPathList, ",")
 }
