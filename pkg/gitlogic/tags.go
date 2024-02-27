@@ -10,16 +10,15 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/pkg/errors"
 )
 
-func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.Repository) (err error) {
-	var gitAuth transport.AuthMethod
-	_, gitAuth, err = c.GetClientAuth()
+// WaitForTags waits for the given git tags to include the given commit.
+func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.Repository) error {
+	_, gitAuth, err := c.GetClientAuth()
 	if err != nil {
-		gitAuth, err = ssh.DefaultAuthBuilder("")
+		gitAuth, err := ssh.DefaultAuthBuilder("")
 		if err != nil {
 			return err
 		}
@@ -33,20 +32,21 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 	if err != nil {
 		return errors.Wrap(err, "listing tag objects")
 	}
-	err = tagIter.ForEach(func(r *plumbing.Reference) (err error) {
-		if object, err := repo.TagObject(r.Hash()); err == nil {
-			if c.WaitForTags.Match(object.Name) {
-				log.Printf("Selected tag %s", object.Name)
-				watchedTags[object.Name] = object
-				watchedRefspec = append(watchedRefspec, config.RefSpec(r.Name()+":"+r.Name()))
-			}
+	err = tagIter.ForEach(func(r *plumbing.Reference) error {
+		object, err := repo.TagObject(r.Hash())
+		if err != nil {
+			return nil
+		}
+		if c.WaitForTags.Match(object.Name) {
+			log.Printf("Selected tag %s", object.Name)
+			watchedTags[object.Name] = object
+			watchedRefspec = append(watchedRefspec, config.RefSpec(r.Name()+":"+r.Name()))
 		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-
 	if len(watchedTags) == 0 {
 		return errors.New("found no matching tags to wait for")
 	}
@@ -60,10 +60,10 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 			Depth:    c.Depth,
 			Force:    true,
 		})
-		if err != nil && err != git.NoErrAlreadyUpToDate {
+		if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 			// If the tag is removed from the remote, we should remove it too
-			var errNoMatching = git.NoMatchingRefSpecError{}
-			if isRemoteMissing := errors.As(err, &errNoMatching); isRemoteMissing {
+			var errNoMatching git.NoMatchingRefSpecError
+			if errors.As(err, &errNoMatching) {
 				log.Printf("failed to fetch tag: %s", err.Error())
 				time.Sleep(2 * time.Second)
 				continue
@@ -71,7 +71,7 @@ func WaitForTags(ctx context.Context, c Config, commit plumbing.Hash, repo *git.
 			return errors.Wrap(err, "fetching tag refs")
 		}
 
-		var needsSync = make(map[string]bool)
+		needsSync := make(map[string]bool)
 		for name, t := range watchedTags {
 			// get latest tagObject
 			ref, err := repo.Tag(name)

@@ -13,8 +13,8 @@ help:  ## Display this help
 
 .PHONY: build
 build: ## Build binaries
-	GO111MODULE=on go build -o bin/sync -v ./
+	go build -o bin/sync -v ./
 
 .PHONY: test
 test: ## test
-	GO111MODULE=on go test -v ./...
+	go test -v ./...

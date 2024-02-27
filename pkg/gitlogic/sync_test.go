@@ -16,16 +16,18 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+//nolint:errcheck
 func TestSync(t *testing.T) {
 	// Prepare git repo
 	fs := memfs.New()
 	storer := memory.NewStorage()
 	repo, err := git.Init(storer, fs)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	w, err := repo.Worktree()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Some files
 	fs.MkdirAll("bases/app1", 1444)
@@ -36,22 +38,27 @@ func TestSync(t *testing.T) {
 
 	// Initial commit
 	err = addAllFiles(w)
-	assert.NoError(t, err)
-	hash, err := w.Commit("init", &git.CommitOptions{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	hash, err := w.Commit("init", &git.CommitOptions{
+		Author: &object.Signature{Name: "F", Email: "f"},
+	})
+	require.NoError(t, err)
 	err = storer.SetReference(plumbing.NewHashReference("master", hash))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Input fs
 	inputFs := memfs.New()
 	writeFile(inputFs, "template.yaml", "updated: true")
 
 	// Test
-	commit := Sync(repo, "bases/app2", inputFs, &git.CommitOptions{}, "sync")
-	assert.NotNil(t, commit)
+	commit, err := Sync(repo, []string{"bases/app2"}, inputFs, &git.CommitOptions{
+		Author: &object.Signature{Name: "F", Email: "f"},
+	}, "sync")
+	require.NoError(t, err)
+	require.NotNil(t, commit)
 	changes, err := diff(repo, hash.String(), commit.Hash.String())
-	assert.NoError(t, err)
-	assert.NotNil(t, changes)
+	require.NoError(t, err)
+	require.NotNil(t, changes)
 
 	// Assert diff is correct
 	if assert.Len(t, changes, 2) {
@@ -67,10 +74,10 @@ func TestSync(t *testing.T) {
 
 	// Assert which files there are in the commit
 	err = w.Checkout(&git.CheckoutOptions{Hash: commit.Hash, Keep: false, Force: true})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	files, err := fs.ReadDir("bases/app2")
-	assert.NoError(t, err)
-	assert.Len(t, files, 1)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
 }
 
 func writeFile(fs billy.Filesystem, file string, contents string) error {
@@ -78,8 +85,10 @@ func writeFile(fs billy.Filesystem, file string, contents string) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(f, bytes.NewBufferString(contents))
 	defer f.Close()
+
+	_, err = io.Copy(f, bytes.NewBufferString(contents))
+	
 	return err
 }
 

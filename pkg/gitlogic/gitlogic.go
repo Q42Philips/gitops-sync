@@ -8,12 +8,12 @@ import (
 )
 
 // ChrootMkdir creates the directory and descends, returning a chrooted filesystem to that dir
-func ChrootMkdir(fs billy.Filesystem, path string) (out billy.Filesystem, err error) {
-	if err = fs.MkdirAll(path, 1444); err != nil {
+func ChrootMkdir(fs billy.Filesystem, path string) (billy.Filesystem, error) {
+	if err := fs.MkdirAll(path, 1444); err != nil {
 		return nil, err
 	}
-	out, err = fs.Chroot(path)
-	return
+	out, err := fs.Chroot(path)
+	return out, err
 }
 
 // RmRecursively removes are directory recursively
@@ -42,7 +42,10 @@ func RmRecursively(fs billy.Filesystem, path string) error {
 			return err
 		}
 		for _, f := range files {
-			RmRecursively(chroot, f.Name())
+			err := RmRecursively(chroot, f.Name())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	// Finally delete empty dir
