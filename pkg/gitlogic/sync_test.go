@@ -39,7 +39,9 @@ func TestSync(t *testing.T) {
 	// Initial commit
 	err = addAllFiles(w)
 	require.NoError(t, err)
-	hash, err := w.Commit("init", &git.CommitOptions{})
+	hash, err := w.Commit("init", &git.CommitOptions{
+		Author: &object.Signature{Name: "F", Email: "f"},
+	})
 	require.NoError(t, err)
 	err = storer.SetReference(plumbing.NewHashReference("master", hash))
 	require.NoError(t, err)
@@ -49,7 +51,9 @@ func TestSync(t *testing.T) {
 	writeFile(inputFs, "template.yaml", "updated: true")
 
 	// Test
-	commit, err := Sync(repo, []string{"bases/app2"}, inputFs, &git.CommitOptions{}, "sync")
+	commit, err := Sync(repo, []string{"bases/app2"}, inputFs, &git.CommitOptions{
+		Author: &object.Signature{Name: "F", Email: "f"},
+	}, "sync")
 	require.NoError(t, err)
 	require.NotNil(t, commit)
 	changes, err := diff(repo, hash.String(), commit.Hash.String())
